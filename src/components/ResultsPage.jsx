@@ -31,6 +31,7 @@ import API from '../config/api';
 import FilterSidebar from './FilterSidebar';
 import SortTabs from './SortTabs';
 import ResultRow from './ResultRow';
+import MarcusAvatar from './MarcusAvatar';
 
 const DEFAULT_FILTERS = {
   brands: [],
@@ -681,14 +682,18 @@ export default function ResultsPage() {
         </div>
         <div className="flex items-center justify-center py-32">
           <div className="text-center">
-            <div className="w-10 h-10 border-3 rounded-full animate-spin mx-auto mb-4" style={{ borderColor: `${accentColor}22`, borderTopColor: accentColor }} />
+            isMarcusSearch ? (
+              <MarcusAvatar size="lg" className="mx-auto mb-4 animate-pulse" />
+            ) : (
+              <div className="w-10 h-10 border-3 rounded-full animate-spin mx-auto mb-4" style={{ borderColor: `${accentColor}22`, borderTopColor: accentColor }} />
+            )}
             <h3 className="text-base font-semibold text-gray-800 mb-1">
               {marcusStatus === 'diagnosing'
-                ? '🤖 Marcus is diagnosing...'
+                ? 'Marcus is diagnosing...'
                 : marcusStatus === 'searching'
-                  ? '🔍 Searching for parts...'
+                  ? 'Searching for parts...'
                   : isMarcusSearch
-                    ? '🤖 Marcus is analyzing...'
+                    ? 'Marcus is analyzing...'
                     : isMultiPart
                       ? `Searching ${partQueries.length} parts...`
                       : 'Searching suppliers...'}
@@ -754,7 +759,7 @@ export default function ResultsPage() {
             <div className="flex items-center gap-2">
               <h1 className="text-base font-bold text-gray-900">{headerLabel}</h1>
               {isMarcusSearch && (
-                <span className="text-[10px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">🤖 Marcus</span>
+                <span className="text-[10px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium inline-flex items-center gap-1"><MarcusAvatar size="xs" /> Marcus</span>
               )}
               {isMultiPart && (
                 <span className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full font-medium">
@@ -814,7 +819,7 @@ export default function ResultsPage() {
       {isMarcusSearch && marcusSummary && marcusStatus === 'done' && (
         <div className="px-6 py-3 bg-amber-50 border-b border-amber-100">
           <div className="flex items-start gap-3">
-            <span className="text-lg flex-shrink-0">🤖</span>
+            <MarcusAvatar size="md" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-amber-900">{marcusSummary}</p>
               {marcusDetails && (
