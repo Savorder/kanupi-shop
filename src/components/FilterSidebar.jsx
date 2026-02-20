@@ -112,6 +112,18 @@ export default function FilterSidebar({
           </button>
         )}
 
+        {/* Availability */}
+        <div>
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Availability
+          </div>
+          <FilterCheckbox
+            label="In Stock only"
+            checked={filters.inStockOnly || false}
+            onChange={() => onFilterChange({ ...filters, inStockOnly: !filters.inStockOnly })}
+          />
+        </div>
+
         {/* Brand */}
         <FilterSection title="Brand" count={availableBrands.length}>
           {sortedBrands.map((brand) => (
@@ -195,18 +207,6 @@ export default function FilterSidebar({
               />
             </div>
           </div>
-        </div>
-
-        {/* Availability */}
-        <div>
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-            Availability
-          </div>
-          <FilterCheckbox
-            label="In Stock only"
-            checked={filters.inStockOnly || false}
-            onChange={() => onFilterChange({ ...filters, inStockOnly: !filters.inStockOnly })}
-          />
         </div>
       </div>
     </aside>
