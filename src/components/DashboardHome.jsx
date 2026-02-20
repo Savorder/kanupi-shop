@@ -236,10 +236,10 @@ export default function DashboardHome() {
 
   const goToMultiPartResults = useCallback((queries) => {
     const params = new URLSearchParams();
-    params.set('parts', JSON.stringify(queries.map((q) => q.query)));
-    params.set('labels', JSON.stringify(queries.map((q) => q.label)));
-    if (queries.length === 1) {
-      params.set('q', queries[0].query);
+    params.set('q', queries[0].query);
+    if (queries.length > 1) {
+      params.set('parts', JSON.stringify(queries.map((q) => q.query)));
+      params.set('labels', JSON.stringify(queries.map((q) => q.label)));
     }
     if (vehicle) {
       if (vehicle.year) params.set('year', vehicle.year);
