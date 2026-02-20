@@ -44,7 +44,7 @@ const API = {
     searchHistory: () => `${API_BASE_URL}/api/b2b/search-history`,
     orders: () => `${API_BASE_URL}/api/b2b/orders`,
     order: (id) => `${API_BASE_URL}/api/b2b/orders/${id}`,
-    analytics: () => `${API_BASE_URL}/api/b2b/analytics`,
+    analyticsToday: () => `${API_BASE_URL}/api/b2b/analytics/today`,
   },
 };
 
