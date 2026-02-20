@@ -89,7 +89,14 @@ export default function DashboardHome() {
   const [trims, setTrims] = useState([]);
   const [selectedYear, setSelectedYear] = useState('');
   const [selectedMake, setSelectedMake] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');const [trims, setTrims] = useState([]);
+  const [engines, setEngines] = useState([]);
+  const [selectedYear, setSelectedYear] = useState('');
+  const [selectedMake, setSelectedMake] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedTrim, setSelectedTrim] = useState('');
+  const [selectedEngine, setSelectedEngine] = useState('');
+  const [ymmLoading, setYmmLoading] = useState(false);
   const [selectedTrim, setSelectedTrim] = useState('');
   const [ymmLoading, setYmmLoading] = useState(false);
 
@@ -234,10 +241,42 @@ export default function DashboardHome() {
     } finally { setYmmLoading(false); }
   };
 
-  const handleYearChange = (year) => { setSelectedYear(year); loadMakes(year); };
-  const handleMakeChange = (make) => { setSelectedMake(make); loadModels(selectedYear, make); };
-  const handleModelChange = (model) => { setSelectedModel(model); loadTrims(selectedYear, selectedMake, model); };
-  const handleTrimChange = (trim) => { setSelectedTrim(trim); };
+  const loadEngines = async (year, make, model, trim) => {
+    setEngines([]); setSelectedEngine('');
+    if (!year || !make || !model) return;
+    try {
+      setYmmLoading(true);
+      let url = `${API.baseUrl}/api/vehicles/engines?year=${year}&make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}`;
+      if (trim) url += `&trim=${encodeURIComponent(trim)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const engineList = data.data || data.engines || data || [];
+      const raw = Array.isArray(engineList) ? engineList : [];
+      const descriptions = raw.map((e) => {
+        if (typeof e === 'string') return e;
+        const parts = [];
+        if (e.size) parts.push(`${Number.isInteger(e.size) ? e.size.toFixed(1) : e.size}L`);
+        if (e.cylinders) parts.push(e.cylinders >= 6 ? `V${e.cylinders}` : `${e.cylinders}-Cyl`);
+        if (e.engine_type?.toLowerCase().includes('turbo') || e.turbo) parts.push('Turbo');
+        if (e.engine_type?.toLowerCase().includes('super') || e.supercharged) parts.push('Supercharged');
+        const fuel = (e.fuel_type || e.fuelType || '').toLowerCase();
+        if (fuel.includes('diesel')) parts.push('Diesel');
+        else if (fuel.includes('electric')) parts.push('Electric');
+        else if (fuel.includes('hybrid')) parts.push('Hybrid');
+        if (e.horsepower || e.horsepower_hp) parts.push(`${e.horsepower || e.horsepower_hp}hp`);
+        return parts.length > 0 ? parts.join(' ') : (e.description || e.name || '');
+      }).filter(Boolean);
+      const unique = [...new Set(descriptions)].sort();
+      setEngines(unique);
+    } catch (err) {
+      console.error('[DashboardHome] Failed to load engines:', err);
+    } finally { setYmmLoading(false); }
+  };
+
+  const handleYearChange = (year) => { setSelectedYear(year); setEngines([]); setSelectedEngine(''); loadMakes(year); };
+  const handleMakeChange = (make) => { setSelectedMake(make); setEngines([]); setSelectedEngine(''); loadModels(selectedYear, make); };
+  const handleModelChange = (model) => { setSelectedModel(model); setEngines([]); setSelectedEngine(''); loadTrims(selectedYear, selectedMake, model); };
+  const handleTrimChange = (trim) => { setSelectedTrim(trim); loadEngines(selectedYear, selectedMake, selectedModel, trim); };
 
   const handleYmmSelect = () => {
     if (!selectedYear || !selectedMake || !selectedModel) return;
@@ -246,7 +285,7 @@ export default function DashboardHome() {
       make: selectedMake,
       model: selectedModel,
       trim: selectedTrim || '',
-      engine: '',
+      engine: selectedEngine || '',
     });
   };
 
@@ -296,8 +335,8 @@ export default function DashboardHome() {
   const handleChangeVehicle = () => {
     clearVehicle();
     setVinInput(''); setPlateInput('');
-    setSelectedYear(''); setSelectedMake(''); setSelectedModel(''); setSelectedTrim('');
-    setMakes([]); setModels([]); setTrims([]);
+    setSelectedYear(''); setSelectedMake(''); setSelectedModel(''); setSelectedTrim(''); setSelectedEngine('');
+    setMakes([]); setModels([]); setTrims([]); setEngines([]);
     setVehicleError('');
     setActivePanel('vehicle');
   };
@@ -569,6 +608,12 @@ export default function DashboardHome() {
                         <select value={selectedTrim} onChange={(e) => handleTrimChange(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700">
                           <option value="">Trim (optional)</option>
                           {trims.map((t) => { const name = typeof t === 'object' ? t.name || t.trim || t : t; return <option key={name} value={name}>{name}</option>; })}
+                        </select>
+                      )}
+                      {engines.length > 0 && (
+                        <select value={selectedEngine} onChange={(e) => setSelectedEngine(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700">
+                          <option value="">Engine (optional)</option>
+                          {engines.map((eng) => <option key={eng} value={eng}>{eng}</option>)}
                         </select>
                       )}
                     </div>
