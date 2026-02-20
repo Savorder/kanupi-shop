@@ -163,7 +163,6 @@ export default function ResultsPage() {
   const make = searchParams.get('make');
   const model = searchParams.get('model');
   const vin = searchParams.get('vin');
-  const partsParam = searchParams.get('parts');
   const vehicleLabel = year && make && model ? `${year} ${make} ${model}` : null;
 
   // ── Multi-part params from RelatedPartsDrawer ───────────────────
