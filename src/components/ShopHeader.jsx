@@ -30,8 +30,8 @@ export default function ShopHeader() {
     .join('');
 
   const navItems = [
-    { path: '/', label: 'Dashboard' },
     { path: '/orders', label: 'Order History' },
+    { path: '/preferences', label: 'Preferences' },
     { path: '/settings', label: 'Settings' },
   ];
 
