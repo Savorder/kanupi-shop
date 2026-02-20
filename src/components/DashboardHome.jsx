@@ -87,9 +87,6 @@ export default function DashboardHome() {
   const [makes, setMakes] = useState([]);
   const [models, setModels] = useState([]);
   const [trims, setTrims] = useState([]);
-  const [selectedYear, setSelectedYear] = useState('');
-  const [selectedMake, setSelectedMake] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');const [trims, setTrims] = useState([]);
   const [engines, setEngines] = useState([]);
   const [selectedYear, setSelectedYear] = useState('');
   const [selectedMake, setSelectedMake] = useState('');
