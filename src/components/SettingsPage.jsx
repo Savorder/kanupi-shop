@@ -149,6 +149,8 @@ export default function SettingsPage() {
 
       const data = await res.json();
       setLogoUrl(data.logo_url);
+      setSaveMessage({ type: 'success', text: 'Logo uploaded and saved' });
+      setTimeout(() => setSaveMessage(null), 4000);
 
       if (typeof refreshShop === 'function') {
         await refreshShop();
@@ -176,6 +178,8 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error('Failed to remove logo');
 
       setLogoUrl(null);
+      setSaveMessage({ type: 'success', text: 'Logo removed' });
+      setTimeout(() => setSaveMessage(null), 4000);
 
       if (typeof refreshShop === 'function') {
         await refreshShop();
