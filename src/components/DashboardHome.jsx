@@ -97,8 +97,6 @@ export default function DashboardHome() {
   const [selectedTrim, setSelectedTrim] = useState('');
   const [selectedEngine, setSelectedEngine] = useState('');
   const [ymmLoading, setYmmLoading] = useState(false);
-  const [selectedTrim, setSelectedTrim] = useState('');
-  const [ymmLoading, setYmmLoading] = useState(false);
 
   // ── Part Search state ───────────────────────────────────────────
   const [partSearchQuery, setPartSearchQuery] = useState('');
