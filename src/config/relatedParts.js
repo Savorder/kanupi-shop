@@ -9,13 +9,14 @@
  * Used by RelatedPartsDrawer to suggest companion parts when a
  * service writer selects a part from the category browser or search.
  * 
- * Key naming matches the part labels used in partCategories.js
- * (the category browser). Lookup is case-insensitive via normalize().
+ * Matching is fuzzy — handles variations like "Strut Assembly", "Struts",
+ * "Complete Strut", "Brake Pad Set", "Disc Brake Pad", etc.
  */
 
 const RELATED_PARTS = {
   // ── Brakes ────────────────────────────────────────────────────────
   'Brake Pads': {
+    aliases: ['brake pad', 'disc brake pad', 'brake pad set', 'front brake pad', 'rear brake pad', 'ceramic brake pad'],
     positions: [
       { value: 'front', label: 'Front Brake Pads', default: true },
       { value: 'rear', label: 'Rear Brake Pads' },
@@ -30,6 +31,7 @@ const RELATED_PARTS = {
   },
 
   'Brake Rotors': {
+    aliases: ['brake rotor', 'disc brake rotor', 'rotor', 'rotors', 'brake disc'],
     positions: [
       { value: 'front', label: 'Front Rotors', default: true },
       { value: 'rear', label: 'Rear Rotors' },
@@ -44,6 +46,7 @@ const RELATED_PARTS = {
   },
 
   'Brake Calipers': {
+    aliases: ['brake caliper', 'caliper', 'calipers', 'disc brake caliper', 'caliper assembly'],
     positions: [
       { value: 'front-left', label: 'Front Left Caliper' },
       { value: 'front-right', label: 'Front Right Caliper' },
@@ -61,6 +64,7 @@ const RELATED_PARTS = {
   },
 
   'Brake Drums': {
+    aliases: ['brake drum', 'drum', 'drums', 'rear drum'],
     positions: [
       { value: 'rear', label: 'Rear Brake Drums', default: true },
     ],
@@ -72,6 +76,7 @@ const RELATED_PARTS = {
   },
 
   'Brake Shoes': {
+    aliases: ['brake shoe', 'shoe', 'shoes', 'rear brake shoe'],
     positions: [
       { value: 'rear', label: 'Rear Brake Shoes', default: true },
     ],
@@ -81,8 +86,17 @@ const RELATED_PARTS = {
     ],
   },
 
+  'Brake Master Cylinder': {
+    aliases: ['master cylinder', 'brake master'],
+    related: [
+      { label: 'Brake Booster', reason: 'Booster and master cylinder work together — inspect both', checked: false },
+      { label: 'Brake Lines', reason: 'Inspect brake lines while system is open', checked: false },
+    ],
+  },
+
   // ── Steering & Suspension ─────────────────────────────────────────
   'Struts': {
+    aliases: ['strut', 'strut assembly', 'strut assemblies', 'complete strut', 'complete strut assembly', 'loaded strut', 'front strut', 'rear strut', 'shock strut', 'macpherson strut'],
     positions: [
       { value: 'front', label: 'Front Strut Assemblies', default: true },
       { value: 'rear-struts', label: 'Rear Strut Assemblies' },
@@ -98,6 +112,7 @@ const RELATED_PARTS = {
   },
 
   'Shocks': {
+    aliases: ['shock', 'shock absorber', 'shock absorbers', 'rear shock', 'front shock'],
     positions: [
       { value: 'rear', label: 'Rear Shocks', default: true },
       { value: 'front', label: 'Front Shocks' },
@@ -106,23 +121,12 @@ const RELATED_PARTS = {
     related: [
       { label: 'Struts', reason: 'If vehicle has struts up front, consider replacing those too', checked: false },
       { label: 'Sway Bar Link', reason: 'Common wear item — easy to do while shocks are out', checked: false },
-      { label: 'Bump Stop', reason: 'Check bump stops for deterioration', checked: false },
     ],
     note: 'Trucks and body-on-frame SUVs often use shocks on all four corners. Most cars use struts front and shocks rear. Always replace in pairs.',
   },
 
-  'Strut Mount': {
-    positions: [
-      { value: 'front', label: 'Front Strut Mounts', default: true },
-      { value: 'rear', label: 'Rear Strut Mounts' },
-    ],
-    related: [
-      { label: 'Struts', reason: 'If strut mounts are worn, struts are likely worn too', checked: true },
-      { label: 'Bearing Plate', reason: 'Upper bearing plate often sold separately', checked: false },
-    ],
-  },
-
   'Control Arm': {
+    aliases: ['control arm', 'control arm assembly', 'lower control arm', 'upper control arm', 'a-arm', 'wishbone'],
     positions: [
       { value: 'front-lower', label: 'Front Lower Control Arm', default: true },
       { value: 'front-upper', label: 'Front Upper Control Arm' },
@@ -138,6 +142,7 @@ const RELATED_PARTS = {
   },
 
   'Ball Joint': {
+    aliases: ['ball joint', 'ball joints', 'lower ball joint', 'upper ball joint'],
     positions: [
       { value: 'front-lower', label: 'Front Lower Ball Joint', default: true },
       { value: 'front-upper', label: 'Front Upper Ball Joint' },
@@ -150,6 +155,7 @@ const RELATED_PARTS = {
   },
 
   'Tie Rod End': {
+    aliases: ['tie rod', 'tie rod end', 'inner tie rod', 'outer tie rod', 'tie rod assembly'],
     positions: [
       { value: 'inner', label: 'Inner Tie Rod End', default: true },
       { value: 'outer', label: 'Outer Tie Rod End' },
@@ -163,6 +169,7 @@ const RELATED_PARTS = {
   },
 
   'Wheel Bearing': {
+    aliases: ['wheel bearing', 'bearing', 'hub bearing', 'wheel bearing assembly'],
     positions: [
       { value: 'front-left', label: 'Front Left' },
       { value: 'front-right', label: 'Front Right' },
@@ -177,6 +184,7 @@ const RELATED_PARTS = {
   },
 
   'Wheel Hub': {
+    aliases: ['wheel hub', 'hub assembly', 'wheel hub assembly', 'hub bearing assembly'],
     positions: [
       { value: 'front-left', label: 'Front Left' },
       { value: 'front-right', label: 'Front Right' },
@@ -190,6 +198,7 @@ const RELATED_PARTS = {
   },
 
   'Sway Bar Link': {
+    aliases: ['sway bar link', 'stabilizer link', 'stabilizer bar link', 'sway bar end link', 'anti-roll bar link'],
     positions: [
       { value: 'front', label: 'Front Sway Bar Links', default: true },
       { value: 'rear', label: 'Rear Sway Bar Links' },
@@ -202,6 +211,7 @@ const RELATED_PARTS = {
   },
 
   'CV Axle': {
+    aliases: ['cv axle', 'cv shaft', 'axle shaft', 'cv joint', 'half shaft', 'drive axle'],
     positions: [
       { value: 'front-left', label: 'Front Left CV Axle' },
       { value: 'front-right', label: 'Front Right CV Axle' },
@@ -215,8 +225,26 @@ const RELATED_PARTS = {
     note: 'CV axle failure often starts with a torn boot leaking grease. Clicking on turns is the telltale symptom.',
   },
 
+  'Steering Rack': {
+    aliases: ['steering rack', 'rack and pinion', 'steering gear', 'power steering rack'],
+    related: [
+      { label: 'Tie Rod End', reason: 'Inner tie rods connect to the rack — replace together', checked: true },
+      { label: 'Power Steering Pump', reason: 'If pump contaminated the rack, replace both', checked: false },
+    ],
+    note: 'Alignment required after steering rack replacement.',
+  },
+
+  'Power Steering Pump': {
+    aliases: ['power steering pump', 'ps pump', 'steering pump'],
+    related: [
+      { label: 'Serpentine Belt', reason: 'Belt drives the pump — inspect for wear', checked: false },
+      { label: 'Steering Rack', reason: 'A failing pump can damage the rack over time', checked: false },
+    ],
+  },
+
   // ── Engine Cooling ────────────────────────────────────────────────
   'Radiator': {
+    aliases: ['radiator', 'radiator assembly'],
     related: [
       { label: 'Thermostat', reason: 'Replace thermostat with new radiator — cheap part, prevents overheating', checked: true },
       { label: 'Radiator Hose', reason: 'Old hoses can fail on a new radiator', checked: true },
@@ -227,6 +255,7 @@ const RELATED_PARTS = {
   },
 
   'Water Pump': {
+    aliases: ['water pump', 'coolant pump', 'engine water pump'],
     related: [
       { label: 'Thermostat', reason: 'Replace together — coolant is already drained', checked: true },
       { label: 'Serpentine Belt', reason: 'Belt must come off for water pump — replace if worn', checked: false },
@@ -237,14 +266,24 @@ const RELATED_PARTS = {
   },
 
   'Thermostat': {
+    aliases: ['thermostat', 'engine thermostat', 'coolant thermostat'],
     related: [
       { label: 'Coolant Temperature Sensor', reason: 'Test sensor while thermostat housing is open', checked: false },
       { label: 'Radiator Hose', reason: 'Inspect upper hose connection at thermostat housing', checked: false },
     ],
   },
 
+  'Radiator Hose': {
+    aliases: ['radiator hose', 'upper radiator hose', 'lower radiator hose', 'coolant hose'],
+    related: [
+      { label: 'Thermostat', reason: 'Replace thermostat when upper hose is disconnected', checked: false },
+      { label: 'Radiator', reason: 'Inspect radiator condition while hoses are off', checked: false },
+    ],
+  },
+
   // ── Engine Parts ──────────────────────────────────────────────────
   'Serpentine Belt': {
+    aliases: ['serpentine belt', 'drive belt', 'accessory belt', 'v-belt'],
     related: [
       { label: 'Belt Tensioner', reason: 'Worn tensioner will eat a new belt — common to replace together', checked: true },
       { label: 'Idler Pulley', reason: 'Pulleys wear with the belt — listen for bearing noise', checked: false },
@@ -253,15 +292,25 @@ const RELATED_PARTS = {
   },
 
   'Timing Belt': {
+    aliases: ['timing belt', 'timing belt kit', 'cam belt'],
     related: [
       { label: 'Water Pump', reason: 'Critical — water pump is behind the timing cover, replace now to avoid doing the job twice', checked: true },
-      { label: 'Timing Belt Tensioner', reason: 'Tensioner and idler pulleys should always be replaced with the belt', checked: true },
       { label: 'Serpentine Belt', reason: 'Usually removed to access timing belt — replace if due', checked: false },
     ],
     note: 'Timing belt replacement is a major service. Always replace the water pump and tensioner together.',
   },
 
+  'Timing Chain': {
+    aliases: ['timing chain', 'timing chain kit', 'timing set'],
+    related: [
+      { label: 'Water Pump', reason: 'Access overlap — replace preventively', checked: false },
+      { label: 'Valve Cover Gasket', reason: 'Valve cover comes off for chain access on many engines', checked: false },
+    ],
+    note: 'Timing chains last longer than belts but still wear. Listen for rattle on cold start.',
+  },
+
   'Engine Mount': {
+    aliases: ['engine mount', 'motor mount', 'engine mounting', 'transmission mount'],
     positions: [
       { value: 'front', label: 'Front Engine Mount' },
       { value: 'rear', label: 'Rear Engine Mount (Torque Mount)' },
@@ -277,6 +326,7 @@ const RELATED_PARTS = {
 
   // ── Ignition ──────────────────────────────────────────────────────
   'Spark Plugs': {
+    aliases: ['spark plug', 'spark plugs', 'plug', 'plugs', 'ignition plug'],
     related: [
       { label: 'Ignition Coil', reason: 'Worn coils can foul new plugs — inspect or replace as a set', checked: false },
       { label: 'Spark Plug Wires', reason: 'If vehicle has plug wires, replace with new plugs', checked: false },
@@ -285,6 +335,7 @@ const RELATED_PARTS = {
   },
 
   'Ignition Coil': {
+    aliases: ['ignition coil', 'coil pack', 'coil on plug', 'cop', 'ignition coil pack'],
     related: [
       { label: 'Spark Plugs', reason: 'Replace plugs with coils for best results', checked: true },
       { label: 'Spark Plug Wires', reason: 'If vehicle uses wires, replace the set', checked: false },
@@ -294,6 +345,7 @@ const RELATED_PARTS = {
 
   // ── A/C & Heating ─────────────────────────────────────────────────
   'AC Compressor': {
+    aliases: ['ac compressor', 'a/c compressor', 'air conditioning compressor', 'compressor'],
     related: [
       { label: 'AC Condenser', reason: 'Metal debris from failed compressor contaminates condenser', checked: false },
       { label: 'Serpentine Belt', reason: 'Belt drives the compressor — inspect for wear', checked: false },
@@ -302,8 +354,23 @@ const RELATED_PARTS = {
     note: 'System must be evacuated and recharged. Inspect for metal contamination throughout the system.',
   },
 
+  'AC Condenser': {
+    aliases: ['ac condenser', 'a/c condenser', 'condenser'],
+    related: [
+      { label: 'AC Compressor', reason: 'If condenser leaked, compressor may be contaminated', checked: false },
+    ],
+  },
+
+  'Blower Motor': {
+    aliases: ['blower motor', 'hvac blower', 'heater blower', 'fan motor'],
+    related: [
+      { label: 'Cabin Air Filter', reason: 'Clogged filter overworks the blower motor', checked: false },
+    ],
+  },
+
   // ── Electrical & Starting ─────────────────────────────────────────
   'Alternator': {
+    aliases: ['alternator', 'generator'],
     related: [
       { label: 'Serpentine Belt', reason: 'Belt must come off — replace if worn', checked: false },
       { label: 'Battery', reason: 'Bad alternator may have damaged battery — test it', checked: false },
@@ -311,13 +378,22 @@ const RELATED_PARTS = {
   },
 
   'Starter Motor': {
+    aliases: ['starter', 'starter motor', 'starting motor'],
     related: [
       { label: 'Battery', reason: 'Weak battery can burn out a starter — test battery', checked: false },
     ],
   },
 
+  'Battery': {
+    aliases: ['battery', 'car battery', 'auto battery'],
+    related: [
+      { label: 'Alternator', reason: 'Test alternator output — a bad alternator kills batteries', checked: false },
+    ],
+  },
+
   // ── Exhaust ───────────────────────────────────────────────────────
   'Catalytic Converter': {
+    aliases: ['catalytic converter', 'cat', 'catalytic', 'cat converter'],
     positions: [
       { value: 'front', label: 'Front (Upstream) Catalytic Converter', default: true },
       { value: 'rear', label: 'Rear (Downstream) Catalytic Converter' },
@@ -330,6 +406,7 @@ const RELATED_PARTS = {
   },
 
   'Oxygen Sensor': {
+    aliases: ['oxygen sensor', 'o2 sensor', 'lambda sensor', 'exhaust sensor'],
     positions: [
       { value: 'upstream-bank1', label: 'Upstream (Bank 1 Sensor 1)', default: true },
       { value: 'downstream-bank1', label: 'Downstream (Bank 1 Sensor 2)' },
@@ -342,8 +419,16 @@ const RELATED_PARTS = {
     note: 'Bank 1 is the side with cylinder 1. V6/V8 engines have sensors on both banks.',
   },
 
+  'Muffler': {
+    aliases: ['muffler', 'exhaust muffler', 'silencer'],
+    related: [
+      { label: 'Exhaust Pipe', reason: 'Inspect connecting pipes for rust while muffler is off', checked: false },
+    ],
+  },
+
   // ── Filters ───────────────────────────────────────────────────────
   'Oil Filter': {
+    aliases: ['oil filter'],
     related: [
       { label: 'Air Filter', reason: 'Replace air filter at every other oil change', checked: false },
       { label: 'Cabin Air Filter', reason: 'Easy add-on service', checked: false },
@@ -351,6 +436,7 @@ const RELATED_PARTS = {
   },
 
   'Air Filter': {
+    aliases: ['air filter', 'engine air filter', 'intake filter'],
     related: [
       { label: 'Cabin Air Filter', reason: 'Replace both filters together for complete air quality service', checked: true },
       { label: 'Spark Plugs', reason: 'If high mileage, consider tune-up with filter change', checked: false },
@@ -358,13 +444,39 @@ const RELATED_PARTS = {
   },
 
   'Cabin Air Filter': {
+    aliases: ['cabin air filter', 'cabin filter', 'pollen filter', 'hvac filter'],
     related: [
       { label: 'Air Filter', reason: 'Replace both filters together', checked: false },
     ],
   },
 
+  'Fuel Filter': {
+    aliases: ['fuel filter'],
+    related: [
+      { label: 'Fuel Pump', reason: 'A clogged filter can damage the fuel pump over time', checked: false },
+    ],
+  },
+
+  // ── Fuel System ───────────────────────────────────────────────────
+  'Fuel Pump': {
+    aliases: ['fuel pump', 'fuel pump assembly', 'electric fuel pump'],
+    related: [
+      { label: 'Fuel Filter', reason: 'Always replace filter with new pump', checked: true },
+      { label: 'Fuel Injector', reason: 'Inspect injectors if pump failed from contamination', checked: false },
+    ],
+  },
+
+  'Fuel Injector': {
+    aliases: ['fuel injector', 'injector', 'fuel injectors'],
+    related: [
+      { label: 'Fuel Filter', reason: 'Clogged filter sends debris to injectors', checked: false },
+      { label: 'Spark Plugs', reason: 'Leaking injectors foul spark plugs', checked: false },
+    ],
+  },
+
   // ── Lighting ──────────────────────────────────────────────────────
   'Headlight Assembly': {
+    aliases: ['headlight', 'headlight assembly', 'headlamp', 'head light'],
     positions: [
       { value: 'left', label: 'Driver Side (Left)' },
       { value: 'right', label: 'Passenger Side (Right)' },
@@ -376,6 +488,7 @@ const RELATED_PARTS = {
   },
 
   'Tail Light Assembly': {
+    aliases: ['tail light', 'tail light assembly', 'taillight', 'rear light'],
     positions: [
       { value: 'left', label: 'Driver Side (Left)' },
       { value: 'right', label: 'Passenger Side (Right)' },
@@ -385,35 +498,107 @@ const RELATED_PARTS = {
       { label: 'Brake Light Bulb', reason: 'Replace bulbs in new assembly', checked: false },
     ],
   },
+
+  // ── Sensors ───────────────────────────────────────────────────────
+  'Mass Air Flow Sensor': {
+    aliases: ['mass air flow', 'maf sensor', 'maf', 'airflow sensor'],
+    related: [
+      { label: 'Air Filter', reason: 'Dirty air filter contaminates MAF — always replace together', checked: true },
+    ],
+  },
+
+  'Crankshaft Position Sensor': {
+    aliases: ['crankshaft position sensor', 'crank sensor', 'ckp sensor'],
+    related: [
+      { label: 'Camshaft Position Sensor', reason: 'Cam and crank sensors often fail around the same mileage', checked: false },
+    ],
+  },
+
+  'Camshaft Position Sensor': {
+    aliases: ['camshaft position sensor', 'cam sensor', 'cmp sensor'],
+    related: [
+      { label: 'Crankshaft Position Sensor', reason: 'Cam and crank sensors often fail around the same mileage', checked: false },
+    ],
+  },
+
+  'ABS Wheel Speed Sensor': {
+    aliases: ['abs sensor', 'wheel speed sensor', 'abs wheel speed sensor', 'speed sensor'],
+    positions: [
+      { value: 'front-left', label: 'Front Left' },
+      { value: 'front-right', label: 'Front Right' },
+      { value: 'rear-left', label: 'Rear Left' },
+      { value: 'rear-right', label: 'Rear Right' },
+    ],
+    related: [
+      { label: 'Wheel Hub', reason: 'Some sensors are integrated into the hub assembly', checked: false },
+    ],
+  },
 };
 
 /**
+ * Normalize a string for fuzzy matching.
+ */
+function normalize(str) {
+  return str
+    .toLowerCase()
+    .replace(/['']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Check if two part labels refer to the same thing.
+ * Handles singular/plural, "assembly" suffix, and substring matching.
+ */
+function isMatch(query, target) {
+  const q = normalize(query);
+  const t = normalize(target);
+
+  if (q === t) return true;
+  if (q.includes(t) || t.includes(q)) return true;
+
+  const qNoS = q.replace(/s$/, '');
+  const tNoS = t.replace(/s$/, '');
+  if (qNoS === tNoS) return true;
+  if (qNoS.includes(tNoS) || tNoS.includes(qNoS)) return true;
+
+  const stripSuffixes = (s) => s.replace(/\b(assembly|assemblies|complete|kit|kits|set|sets)\b/g, '').replace(/\s+/g, ' ').trim();
+  const qStripped = stripSuffixes(qNoS);
+  const tStripped = stripSuffixes(tNoS);
+  if (qStripped && tStripped) {
+    if (qStripped === tStripped) return true;
+    if (qStripped.includes(tStripped) || tStripped.includes(qStripped)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Look up related parts for a given part label.
- * Case-insensitive, handles minor variations.
+ * Checks: exact match → alias match → fuzzy word match.
  * 
- * @param {string} partLabel - The part name (e.g. "Brake Pads", "Struts")
- * @returns {object|null} { positions, related, note } or null if no match
+ * @param {string} partLabel - The part name (e.g. "Brake Pads", "Strut Assembly")
+ * @returns {object|null} { positions, related, note, aliases } or null if no match
  */
 export function getRelatedParts(partLabel) {
   if (!partLabel) return null;
 
-  const normalized = partLabel.trim();
+  const query = normalize(partLabel);
 
-  if (RELATED_PARTS[normalized]) {
-    return RELATED_PARTS[normalized];
+  for (const [key, value] of Object.entries(RELATED_PARTS)) {
+    if (normalize(key) === query) return value;
   }
 
-  const lowerQuery = normalized.toLowerCase();
-  for (const [key, value] of Object.entries(RELATED_PARTS)) {
-    if (key.toLowerCase() === lowerQuery) {
-      return value;
+  for (const [, value] of Object.entries(RELATED_PARTS)) {
+    if (value.aliases) {
+      for (const alias of value.aliases) {
+        if (isMatch(query, alias)) return value;
+      }
     }
   }
 
   for (const [key, value] of Object.entries(RELATED_PARTS)) {
-    if (lowerQuery.includes(key.toLowerCase()) || key.toLowerCase().includes(lowerQuery)) {
-      return value;
-    }
+    if (isMatch(query, key)) return value;
   }
 
   return null;
@@ -422,11 +607,6 @@ export function getRelatedParts(partLabel) {
 /**
  * Build search queries from selected parts + positions.
  * Returns an array of { query, label } for the results page.
- * 
- * @param {string} primaryPart - The main part label
- * @param {string|null} selectedPosition - Position value or null
- * @param {string[]} selectedRelated - Array of related part labels
- * @returns {Array<{query: string, label: string}>}
  */
 export function buildSearchQueries(primaryPart, selectedPosition, selectedRelated) {
   const queries = [];
