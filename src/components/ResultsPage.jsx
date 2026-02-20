@@ -163,6 +163,7 @@ export default function ResultsPage() {
   const make = searchParams.get('make');
   const model = searchParams.get('model');
   const vin = searchParams.get('vin');
+  const partsParam = searchParams.get('parts');
   const vehicleLabel = year && make && model ? `${year} ${make} ${model}` : null;
 
   // ── Multi-part params from RelatedPartsDrawer ───────────────────
@@ -291,6 +292,27 @@ export default function ResultsPage() {
           : allMapped;
 
         setRawResults(filtered);
+        // Log search to history (fire-and-forget)
+        const token = session?.access_token;
+        if (token && !isMarcusSearch) {
+          const searchesToLog = isMultiPart && partQueries.length > 0
+            ? partQueries.map((q, i) => ({ search_type: 'part', query: partLabels[i] || q, vehicle_context: vehicleLabel ? { year, make, model, vin } : null, results_count: filtered.filter(p => p._groupLabel === (partLabels[i] || q)).length }))
+            : [{ search_type: 'part', query, vehicle_context: vehicleLabel ? { year, make, model, vin } : null, results_count: filtered.length }];
+
+          searchesToLog.forEach((entry) => {
+            fetch(API.b2b.searchHistory(), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify(entry),
+            }).catch(() => {});
+          });
+        } else if (token && isMarcusSearch) {
+          fetch(API.b2b.searchHistory(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ search_type: 'marcus', query, vehicle_context: vehicleLabel ? { year, make, model, vin } : null, results_count: filtered.length }),
+          }).catch(() => {});
+        }
       } catch (err) {
         if (err.name !== 'AbortError') {
           console.error('[ResultsPage] Search error:', err);
