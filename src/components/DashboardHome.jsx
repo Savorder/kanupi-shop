@@ -26,7 +26,7 @@ import PART_CATEGORIES from '../config/partCategories';
 import { getRelatedParts } from '../config/relatedParts';
 import RelatedPartsDrawer from './RelatedPartsDrawer';
 import API from '../config/api';
-import { getPartIcon } from '../config/partIcons';
+import { getPartIcon } from '../config/partIcons.jsx';
 import MarcusAvatar from './MarcusAvatar';
 
 const US_STATES = [
