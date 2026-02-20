@@ -12,7 +12,11 @@
  *   2. Part Search (text search + category browser) — requires vehicle
  *   3. Ask Marcus (AI diagnosis) — requires vehicle
  * 
- * Top: Time-aware greeting + daily stats
+ * Bottom sections:
+ *   - Recent Searches (from /api/b2b/search-history)
+ *   - Recent Orders (from /api/b2b/orders)
+ * 
+ * Top: Time-aware greeting + live daily stats from /api/b2b/analytics/today
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -29,8 +33,41 @@ const US_STATES = [
   'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
 ];
 
+/**
+ * Format a timestamp into a relative time string (e.g. "12 min ago", "2h ago").
+ */
+function timeAgo(dateString) {
+  if (!dateString) return '';
+  const now = new Date();
+  const date = new Date(dateString);
+  const diffMs = now - date;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin} min ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay === 1) return 'yesterday';
+  return `${diffDay}d ago`;
+}
+
+/**
+ * Map order status to display badge style.
+ */
+function statusBadge(status) {
+  const map = {
+    selected:  { label: 'Selected',  bg: 'bg-gray-50',   text: 'text-gray-600',  border: 'border-gray-200' },
+    ordered:   { label: 'Ordered',   bg: 'bg-blue-50',   text: 'text-blue-700',  border: 'border-blue-200' },
+    shipped:   { label: 'Shipped',   bg: 'bg-amber-50',  text: 'text-amber-700', border: 'border-amber-200' },
+    delivered: { label: 'Delivered', bg: 'bg-green-50',  text: 'text-green-700', border: 'border-green-200' },
+    installed: { label: 'Installed', bg: 'bg-emerald-50',text: 'text-emerald-700',border: 'border-emerald-200' },
+    cancelled: { label: 'Cancelled', bg: 'bg-red-50',    text: 'text-red-600',   border: 'border-red-200' },
+  };
+  return map[status] || map.selected;
+}
+
 export default function DashboardHome() {
-  const { shop, vehicle, setVehicleContext, clearVehicle } = useShop();
+  const { shop, vehicle, setVehicleContext, clearVehicle, session } = useShop();
   const navigate = useNavigate();
   const accentColor = shop?.accent_color || '#dc2626';
 
@@ -69,6 +106,12 @@ export default function DashboardHome() {
   // ── Marcus state ────────────────────────────────────────────────
   const [marcusInput, setMarcusInput] = useState('');
 
+  // ── Dashboard data state ────────────────────────────────────────
+  const [stats, setStats] = useState({ searches: 0, orders: 0, revenue: 0, avgMarginPct: 0 });
+  const [recentSearches, setRecentSearches] = useState([]);
+  const [recentOrders, setRecentOrders] = useState([]);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+
   // ── Time ────────────────────────────────────────────────────────
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
@@ -82,6 +125,48 @@ export default function DashboardHome() {
     if (h < 17) return 'Good afternoon';
     return 'Good evening';
   };
+
+  // ── Load dashboard data (stats + recent searches + recent orders) ─
+  useEffect(() => {
+    const token = session?.access_token;
+    if (!token) {
+      setDashboardLoading(false);
+      return;
+    }
+
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const loadDashboard = async () => {
+      try {
+        const [statsRes, searchesRes, ordersRes] = await Promise.allSettled([
+          fetch(API.b2b.analyticsToday(), { headers }),
+          fetch(`${API.b2b.searchHistory()}?limit=5`, { headers }),
+          fetch(`${API.b2b.orders()}?limit=5`, { headers }),
+        ]);
+
+        if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
+          const data = await statsRes.value.json();
+          if (data.stats) setStats(data.stats);
+        }
+
+        if (searchesRes.status === 'fulfilled' && searchesRes.value.ok) {
+          const data = await searchesRes.value.json();
+          if (data.searches) setRecentSearches(data.searches);
+        }
+
+        if (ordersRes.status === 'fulfilled' && ordersRes.value.ok) {
+          const data = await ordersRes.value.json();
+          if (data.orders) setRecentOrders(data.orders);
+        }
+      } catch (err) {
+        console.error('[DashboardHome] Failed to load dashboard data:', err);
+      } finally {
+        setDashboardLoading(false);
+      }
+    };
+
+    loadDashboard();
+  }, [session]);
 
   // ── Load years on mount ─────────────────────────────────────────
   useEffect(() => {
@@ -290,7 +375,6 @@ export default function DashboardHome() {
   const hasVehicle = !!vehicle;
   const vinOrPlateValid = vehicleLookupMode === 'vin' ? vinInput.length >= 17 : plateInput.length >= 2;
   const ymmValid = selectedYear && selectedMake && selectedModel;
-  const stats = { searches: 24, orders: 7, revenue: 847.50, avgMargin: 38.2 };
 
   const LockedOverlay = () => (
     <div className="mt-4 px-4 py-6 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center">
@@ -307,9 +391,15 @@ export default function DashboardHome() {
     </div>
   );
 
+  // ── Compute recent orders margin total ──────────────────────────
+  const recentOrdersMarginTotal = recentOrders.reduce((sum, o) => {
+    const margin = (o.margin_amount != null) ? o.margin_amount : ((o.list_price || 0) - (o.cost || 0));
+    return sum + margin;
+  }, 0);
+
   return (
     <div className="max-w-screen-xl mx-auto px-6 py-8">
-      {/* ── Greeting + Stats ─────────────────────────────────────── */}
+      {/* ── Greeting + Live Stats ──────────────────────────────────── */}
       <div className="flex items-end justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{greeting()}</h1>
@@ -321,8 +411,8 @@ export default function DashboardHome() {
           {[
             { label: 'Searches', value: stats.searches, icon: '🔍' },
             { label: 'Orders', value: stats.orders, icon: '📦' },
-            { label: 'Revenue', value: `$${stats.revenue.toLocaleString()}`, icon: '💰' },
-            { label: 'Avg Margin', value: `${stats.avgMargin}%`, icon: '📈' },
+            { label: 'Revenue', value: `$${(stats.revenue || 0).toLocaleString()}`, icon: '💰' },
+            { label: 'Avg Margin', value: `${(stats.avgMarginPct || 0).toFixed(1)}%`, icon: '📈' },
           ].map((s) => (
             <div key={s.label} className="text-right">
               <div className="text-xs text-gray-400 mb-0.5">{s.icon} {s.label}</div>
@@ -673,6 +763,167 @@ export default function DashboardHome() {
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* ── Recent Searches + Recent Orders ────────────────────────── */}
+      <div className="grid grid-cols-5 gap-4 mb-8">
+
+        {/* ── Recent Searches (3 cols) ───────────────────────────────── */}
+        <div className="col-span-3 bg-white rounded-2xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-gray-900">Recent Searches</h3>
+            <button
+              onClick={() => navigate('/search-history')}
+              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              View all →
+            </button>
+          </div>
+
+          {dashboardLoading ? (
+            <div className="py-8 text-center">
+              <div className="w-6 h-6 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin mx-auto mb-2" />
+              <p className="text-[11px] text-gray-400">Loading...</p>
+            </div>
+          ) : recentSearches.length === 0 ? (
+            <div className="py-8 text-center">
+              <div className="text-2xl mb-2">🔍</div>
+              <p className="text-xs text-gray-400">No searches yet. Start by searching for a part above.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {recentSearches.map((search) => {
+                const vc = search.vehicle_context || {};
+                const vehicleStr = vc.year && vc.make && vc.model
+                  ? `${vc.year} ${vc.make} ${vc.model}`
+                  : null;
+                const isMarcus = search.search_type === 'marcus';
+
+                return (
+                  <div
+                    key={search.id}
+                    className="flex items-center gap-3 py-3 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded-lg transition-colors"
+                    onClick={() => {
+                      const params = new URLSearchParams();
+                      params.set(isMarcus ? 'marcus' : 'q', search.query);
+                      if (vc.year) params.set('year', vc.year);
+                      if (vc.make) params.set('make', vc.make);
+                      if (vc.model) params.set('model', vc.model);
+                      if (vc.vin) params.set('vin', vc.vin);
+                      navigate(`/results?${params.toString()}`);
+                    }}
+                  >
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0" style={{ background: isMarcus ? '#fef3c7' : `${accentColor}12` }}>
+                      {isMarcus ? '🤖' : '🔧'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-800 truncate">{search.query}</span>
+                        {search.results_count > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded font-medium flex-shrink-0">
+                            {search.results_count} results
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-gray-400 mt-0.5">
+                        {vehicleStr && <span>{vehicleStr}</span>}
+                        {vc.vin && (
+                          <>
+                            {vehicleStr && <span className="text-gray-300">·</span>}
+                            <span className="font-mono">{vc.vin}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-[11px] text-gray-300">{timeAgo(search.created_at)}</span>
+                      <svg className="w-4 h-4 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Recent Orders (2 cols) ─────────────────────────────────── */}
+        <div className="col-span-2 bg-white rounded-2xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-gray-900">Recent Orders</h3>
+            <button
+              onClick={() => navigate('/orders')}
+              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              View all →
+            </button>
+          </div>
+
+          {dashboardLoading ? (
+            <div className="py-8 text-center">
+              <div className="w-6 h-6 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin mx-auto mb-2" />
+              <p className="text-[11px] text-gray-400">Loading...</p>
+            </div>
+          ) : recentOrders.length === 0 ? (
+            <div className="py-8 text-center">
+              <div className="text-2xl mb-2">📦</div>
+              <p className="text-xs text-gray-400">No orders yet. Search for parts and add them to an order.</p>
+            </div>
+          ) : (
+            <>
+              <div className="divide-y divide-gray-100">
+                {recentOrders.map((order) => {
+                  const badge = statusBadge(order.status);
+                  const vc = order.vehicle_context || {};
+                  const vehicleStr = vc.year && vc.make && vc.model
+                    ? `${vc.year} ${vc.make} ${vc.model}`
+                    : null;
+                  const margin = (order.margin_amount != null)
+                    ? order.margin_amount
+                    : ((order.list_price || 0) - (order.cost || 0));
+
+                  return (
+                    <div key={order.id} className="py-3">
+                      <div className="flex items-start justify-between">
+                        <div className="min-w-0 flex-1">
+                          {order.ro_number && (
+                            <div className="text-[10px] font-mono text-gray-400 mb-0.5">{order.ro_number}</div>
+                          )}
+                          <div className="text-sm font-semibold text-gray-800 truncate">
+                            {order.brand} {order.part_number ? `${order.part_number} ` : ''}{order.part_name}
+                          </div>
+                          {vehicleStr && (
+                            <div className="text-[11px] text-gray-400 mt-0.5">{vehicleStr}</div>
+                          )}
+                          <div className="text-[11px] text-gray-400 mt-1 font-mono">
+                            {order.vendor} | Cost: ${(order.cost || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1.5 flex-shrink-0 ml-3">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${badge.bg} ${badge.text} ${badge.border}`}>
+                            {badge.label}
+                          </span>
+                          <span className="text-sm font-bold text-green-600 font-mono">
+                            +${margin.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Margin total */}
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+                <span className="text-xs text-gray-400">Today's margin total</span>
+                <span className="text-base font-bold text-green-600 font-mono">
+                  +${recentOrdersMarginTotal.toFixed(2)}
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
