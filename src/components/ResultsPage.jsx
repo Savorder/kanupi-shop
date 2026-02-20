@@ -5,16 +5,22 @@
  * Enriches results with shop margin rules from ShopContext.
  * 
  * URL params:
- *   ?q=brake+pads&year=2019&make=Honda&model=Accord&vin=...
- *   ?marcus=grinding+noise+from+front+brakes
+ *   Single-part:
+ *     ?q=brake+pads&year=2019&make=Honda&model=Accord&vin=...
+ *     ?marcus=grinding+noise+from+front+brakes
+ *   Multi-part (from RelatedPartsDrawer):
+ *     ?q=front+struts&parts=["front+struts","rear+shocks","strut+mounts"]
+ *       &labels=["Front Struts","Rear Shocks","Strut Mounts"]
+ *       &year=2019&make=Honda&model=Accord
  * 
  * Flow:
  *   1. Parse URL params for query + vehicle context
- *   2. Call /api/parts/search with query + vehicle
+ *   2a. Single-part: Call /api/parts/search with query + vehicle
+ *   2b. Multi-part: Run parallel /api/parts/search for each part
  *   3. Map API response to B2B result format
  *   4. Enrich each result with margin calculations from shop rules
  *   5. Apply client-side filters + sort
- *   6. Render FilterSidebar + SortTabs + ResultRow grid
+ *   6. Render FilterSidebar + SortTabs + ResultRow grid (with group dividers for multi-part)
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
@@ -53,8 +59,9 @@ const KNOWN_BRANDS = [
 /**
  * Map a raw API result into the B2B result format that ResultRow expects.
  * Handles both the unified-result schema and transformResultForFrontend format.
+ * Optionally tags with _groupLabel for multi-part grouped display.
  */
-function mapApiResult(raw, index) {
+function mapApiResult(raw, index, groupLabel) {
   const price = raw.price || raw.totalPrice || 0;
   const brand = raw.brand || extractBrandFromTitle(raw.title || raw.name || '') || 'Unknown';
   const partNumber = raw.partNumber || raw.part_number || '';
@@ -86,7 +93,7 @@ function mapApiResult(raw, index) {
   const source = raw.source || raw.retailer || 'eBay';
 
   return {
-    id: raw.id || raw.sourceItemId || raw.sourceId || `result-${index}`,
+    id: raw.id || raw.sourceItemId || raw.sourceId || `result-${groupLabel || 'single'}-${index}`,
     partName: cleanTitle(title, brand),
     brand,
     partNumber,
@@ -102,6 +109,7 @@ function mapApiResult(raw, index) {
     affiliateUrl: raw.affiliateUrl || raw.url || null,
     marcusScore: raw.relevanceScore || 50,
     marcusReason: null,
+    _groupLabel: groupLabel || null,
   };
 }
 
@@ -157,6 +165,28 @@ export default function ResultsPage() {
   const vin = searchParams.get('vin');
   const vehicleLabel = year && make && model ? `${year} ${make} ${model}` : null;
 
+  // ── Multi-part params from RelatedPartsDrawer ───────────────────
+  const partsParam = searchParams.get('parts');
+  const labelsParam = searchParams.get('labels');
+  const isMultiPart = !!partsParam;
+
+  let partQueries = [];
+  let partLabels = [];
+  if (isMultiPart) {
+    try {
+      partQueries = JSON.parse(partsParam);
+      partLabels = JSON.parse(labelsParam || '[]');
+    } catch {
+      partQueries = [];
+      partLabels = [];
+    }
+  }
+
+  // Display label: multi-part shows all labels joined, single shows query
+  const headerLabel = isMultiPart && partLabels.length > 0
+    ? partLabels.join(' + ')
+    : query;
+
   const [rawResults, setRawResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -166,15 +196,47 @@ export default function ResultsPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [smartFilterActive, setSmartFilterActive] = useState(false);
   const [smartFilterText, setSmartFilterText] = useState('');
+  const [partGroups, setPartGroups] = useState([]);
 
   // ── Fetch results from API ────────────────────────────────────
   useEffect(() => {
-    if (!query) {
+    if (!query && !isMultiPart) {
       setLoading(false);
       return;
     }
 
     const controller = new AbortController();
+
+    /**
+     * Build a search URL for a single part query.
+     */
+    const buildSearchUrl = (partQuery) => {
+      const params = new URLSearchParams({ query: partQuery });
+      if (year) params.set('year', year);
+      if (make) params.set('make', make);
+      if (model) params.set('model', model);
+      if (vin) params.set('vin', vin);
+      params.set('limit', '20');
+      params.set('condition', 'new');
+      return `${API.parts.search()}?${params.toString()}`;
+    };
+
+    /**
+     * Fetch results for a single part query and tag each result with the group label.
+     */
+    const fetchSinglePart = async (partQuery, label) => {
+      const url = buildSearchUrl(partQuery);
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) throw new Error(`Search failed for "${label}" (${response.status})`);
+      const data = await response.json();
+
+      let results = [];
+      if (data.parts && Array.isArray(data.parts)) results = data.parts;
+      else if (data.results && Array.isArray(data.results)) results = data.results;
+      else if (data.data && Array.isArray(data.data)) results = data.data;
+
+      return results.map((raw, i) => mapApiResult(raw, i, label));
+    };
 
     const fetchResults = async () => {
       setLoading(true);
@@ -182,34 +244,51 @@ export default function ResultsPage() {
       const startTime = Date.now();
 
       try {
-        const params = new URLSearchParams({ query });
-        if (year) params.set('year', year);
-        if (make) params.set('make', make);
-        if (model) params.set('model', model);
-        if (vin) params.set('vin', vin);
-        params.set('limit', '20');
-        params.set('condition', 'new');
+        let allMapped = [];
+        let groups = [];
 
-        const url = `${API.parts.search()}?${params.toString()}`;
-        const response = await fetch(url, { signal: controller.signal });
+        if (isMultiPart && partQueries.length > 0) {
+          // ── Multi-part: parallel searches for each part ──────────
+          const searchPairs = partQueries.map((q, i) => ({
+            query: q,
+            label: partLabels[i] || q,
+          }));
 
-        if (!response.ok) throw new Error(`Search failed (${response.status})`);
+          const results = await Promise.allSettled(
+            searchPairs.map((pair) => fetchSinglePart(pair.query, pair.label))
+          );
 
-        const data = await response.json();
+          results.forEach((result, i) => {
+            const label = searchPairs[i].label;
+            if (result.status === 'fulfilled' && result.value.length > 0) {
+              allMapped.push(...result.value);
+              groups.push({ label, count: result.value.length });
+            } else {
+              groups.push({ label, count: 0, error: result.reason?.message || null });
+            }
+          });
+        } else {
+          // ── Single-part: original behavior ──────────────────────
+          const url = buildSearchUrl(query);
+          const response = await fetch(url, { signal: controller.signal });
+          if (!response.ok) throw new Error(`Search failed (${response.status})`);
+          const data = await response.json();
+
+          let results = [];
+          if (data.parts && Array.isArray(data.parts)) results = data.parts;
+          else if (data.results && Array.isArray(data.results)) results = data.results;
+          else if (data.data && Array.isArray(data.data)) results = data.data;
+
+          allMapped = results.map((raw, i) => mapApiResult(raw, i, null));
+        }
+
         setSearchTime(Date.now() - startTime);
-
-        // The API returns results in different shapes
-        let results = [];
-        if (data.parts && Array.isArray(data.parts)) results = data.parts;
-        else if (data.results && Array.isArray(data.results)) results = data.results;
-        else if (data.data && Array.isArray(data.data)) results = data.data;
-
-        const mapped = results.map((raw, i) => mapApiResult(raw, i));
+        setPartGroups(groups);
 
         // Remove shop's excluded brands
         const filtered = excludedBrands.length > 0
-          ? mapped.filter((p) => !excludedBrands.includes(p.brand))
-          : mapped;
+          ? allMapped.filter((p) => !excludedBrands.includes(p.brand))
+          : allMapped;
 
         setRawResults(filtered);
       } catch (err) {
@@ -225,7 +304,7 @@ export default function ResultsPage() {
 
     fetchResults();
     return () => controller.abort();
-  }, [query, year, make, model, vin, excludedBrands]);
+  }, [query, year, make, model, vin, excludedBrands, isMultiPart, partsParam, labelsParam]);
 
   // ── Enrich with margin calculations ───────────────────────────
   const enrichedResults = useMemo(() => {
@@ -264,21 +343,32 @@ export default function ResultsPage() {
   }, [enrichedResults, filters]);
 
   // ── Sort results ──────────────────────────────────────────────
+  // For multi-part: sort WITHIN each group to keep groups visually together
   const sortedResults = useMemo(() => {
-    const sorted = [...filteredResults];
-    switch (sortBy) {
-      case 'best_margin':
-        return sorted.sort((a, b) => b.margin - a.margin);
-      case 'lowest_cost':
-        return sorted.sort((a, b) => a.cost - b.cost);
-      case 'fastest_delivery':
-        return sorted.sort((a, b) => a.deliveryHours - b.deliveryHours);
-      case 'marcus_pick':
-        return sorted.sort((a, b) => (b.marcusScore || 0) - (a.marcusScore || 0));
-      default:
-        return sorted;
+    const sorter = (a, b) => {
+      switch (sortBy) {
+        case 'best_margin': return (b.margin || 0) - (a.margin || 0);
+        case 'lowest_cost': return a.cost - b.cost;
+        case 'fastest_delivery': return a.deliveryHours - b.deliveryHours;
+        case 'marcus_pick': return (b.marcusScore || 0) - (a.marcusScore || 0);
+        default: return 0;
+      }
+    };
+
+    if (isMultiPart && partGroups.length > 0) {
+      // Keep group order intact, sort within each group
+      const grouped = [];
+      for (const group of partGroups) {
+        const groupItems = filteredResults
+          .filter((p) => p._groupLabel === group.label)
+          .sort(sorter);
+        grouped.push(...groupItems);
+      }
+      return grouped;
     }
-  }, [filteredResults, sortBy]);
+
+    return [...filteredResults].sort(sorter);
+  }, [filteredResults, sortBy, isMultiPart, partGroups]);
 
   const marcusPickId = sortBy === 'marcus_pick' && sortedResults.length > 0 ? sortedResults[0].id : null;
 
@@ -355,6 +445,70 @@ export default function ResultsPage() {
     setSmartFilterText('');
   }, []);
 
+  // ── Helper: render rows with group dividers for multi-part ────
+  const renderResultRows = () => {
+    if (!isMultiPart || partGroups.length === 0) {
+      return sortedResults.map((part) => (
+        <ResultRow
+          key={part.id}
+          part={part}
+          isSelected={selectedIds.has(part.id)}
+          onSelect={toggleSelect}
+          isMarcusPick={part.id === marcusPickId}
+          showMarcusBanner={sortBy === 'marcus_pick'}
+          onAddToOrder={handleAddToOrder}
+        />
+      ));
+    }
+
+    // Multi-part: insert group headers between sections
+    const rows = [];
+    let lastGroup = null;
+
+    for (const part of sortedResults) {
+      const groupLabel = part._groupLabel || 'Other';
+
+      if (groupLabel !== lastGroup) {
+        const groupCount = sortedResults.filter((p) => p._groupLabel === groupLabel).length;
+        const groupInfo = partGroups.find((g) => g.label === groupLabel);
+
+        rows.push(
+          <div
+            key={`group-header-${groupLabel}`}
+            className="px-5 py-2.5 bg-gray-50 border-b border-t border-gray-200 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">
+                {groupLabel}
+              </span>
+              <span className="text-[10px] text-gray-400">
+                {groupCount} result{groupCount !== 1 ? 's' : ''}
+              </span>
+            </div>
+            {groupInfo?.error && (
+              <span className="text-[10px] text-amber-500">⚠ Search issue</span>
+            )}
+          </div>
+        );
+        lastGroup = groupLabel;
+      }
+
+      rows.push(
+        <ResultRow
+          key={part.id}
+          part={part}
+          isSelected={selectedIds.has(part.id)}
+          onSelect={toggleSelect}
+          isMarcusPick={part.id === marcusPickId}
+          showMarcusBanner={sortBy === 'marcus_pick'}
+          onAddToOrder={handleAddToOrder}
+        />
+      );
+    }
+
+    return rows;
+  };
+
   // ── Loading state ─────────────────────────────────────────────
   if (loading) {
     return (
@@ -366,15 +520,22 @@ export default function ResultsPage() {
             </svg>
           </button>
           <div>
-            <h1 className="text-base font-bold text-gray-900">{query}</h1>
+            <h1 className="text-base font-bold text-gray-900">{headerLabel}</h1>
             {vehicleLabel && <p className="text-xs text-gray-400">for {vehicleLabel}</p>}
           </div>
         </div>
         <div className="flex items-center justify-center py-32">
           <div className="text-center">
             <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-600 rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-sm text-gray-500 font-medium">Searching parts...</p>
-            <p className="text-xs text-gray-400 mt-1">Checking eBay, Amazon, and local suppliers</p>
+            <p className="text-sm text-gray-500 font-medium">
+              {isMultiPart ? `Searching ${partQueries.length} parts...` : 'Searching parts...'}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              {isMultiPart
+                ? partLabels.join(', ')
+                : 'Checking eBay, Amazon, and local suppliers'
+              }
+            </p>
           </div>
         </div>
       </div>
@@ -391,7 +552,7 @@ export default function ResultsPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-base font-bold text-gray-900">{query}</h1>
+          <h1 className="text-base font-bold text-gray-900">{headerLabel}</h1>
         </div>
         <div className="flex items-center justify-center py-32">
           <div className="text-center">
@@ -423,9 +584,14 @@ export default function ResultsPage() {
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold text-gray-900">{query}</h1>
+              <h1 className="text-base font-bold text-gray-900">{headerLabel}</h1>
               {isMarcusSearch && (
                 <span className="text-[10px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">🤖 Marcus</span>
+              )}
+              {isMultiPart && (
+                <span className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full font-medium">
+                  {partQueries.length} parts
+                </span>
               )}
             </div>
             {vehicleLabel && (
@@ -449,6 +615,19 @@ export default function ResultsPage() {
           )}
         </div>
       </div>
+
+      {/* Multi-part summary banner — shows status dots for each part searched */}
+      {isMultiPart && partGroups.length > 0 && (
+        <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-4 overflow-x-auto">
+          {partGroups.map((group) => (
+            <div key={group.label} className="flex items-center gap-1.5 flex-shrink-0">
+              <span className={`w-2 h-2 rounded-full ${group.count > 0 ? 'bg-green-400' : 'bg-gray-300'}`} />
+              <span className="text-[11px] text-gray-600 font-medium">{group.label}</span>
+              <span className="text-[10px] text-gray-400">({group.count})</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Main layout */}
       <div className="flex">
@@ -490,20 +669,10 @@ export default function ResultsPage() {
             <div className="w-20 flex-shrink-0" />
           </div>
 
-          {/* Result rows */}
+          {/* Result rows (with group dividers for multi-part) */}
           {sortedResults.length > 0 ? (
             <div className="bg-white">
-              {sortedResults.map((part) => (
-                <ResultRow
-                  key={part.id}
-                  part={part}
-                  isSelected={selectedIds.has(part.id)}
-                  onSelect={toggleSelect}
-                  isMarcusPick={part.id === marcusPickId}
-                  showMarcusBanner={sortBy === 'marcus_pick'}
-                  onAddToOrder={handleAddToOrder}
-                />
-              ))}
+              {renderResultRows()}
             </div>
           ) : (
             <div className="px-12 py-20 text-center">
@@ -535,6 +704,12 @@ export default function ResultsPage() {
                 <span>Showing {sortedResults.length} of {enrichedResults.length} results</span>
                 <span>·</span>
                 <span>Cost range: <span className="font-mono text-gray-600">${Math.min(...sortedResults.map(p => p.cost)).toFixed(2)} – ${Math.max(...sortedResults.map(p => p.cost)).toFixed(2)}</span></span>
+                {isMultiPart && (
+                  <>
+                    <span>·</span>
+                    <span>{partGroups.filter(g => g.count > 0).length} of {partGroups.length} parts found</span>
+                  </>
+                )}
               </div>
               <div className="text-right">
                 <span className="text-xs text-gray-400">Best single margin: </span>
