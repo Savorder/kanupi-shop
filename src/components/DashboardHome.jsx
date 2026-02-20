@@ -146,7 +146,10 @@ export default function DashboardHome() {
       const res = await fetch(API.vehicles.trims(year, make, model));
       const data = await res.json();
       const trimList = data.data || data.trims || data || [];
-      setTrims(Array.isArray(trimList) ? trimList : []);
+      const raw = Array.isArray(trimList) ? trimList : [];
+      const names = raw.map((t) => (typeof t === 'object' ? t.name || t.trim || t : t));
+      const unique = [...new Set(names)].filter(Boolean).sort();
+      setTrims(unique);
     } catch (err) {
       console.error('[DashboardHome] Failed to load trims:', err);
     } finally {
