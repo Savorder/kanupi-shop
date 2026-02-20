@@ -1,44 +1,31 @@
 /**
  * ResultsPage — Kayak-style parts results with margin columns.
  * 
+ * WIRED to the real /api/parts/search endpoint on kanupi-backend.
+ * Enriches results with shop margin rules from ShopContext.
+ * 
  * URL params:
  *   ?q=brake+pads&year=2019&make=Honda&model=Accord&vin=...
  *   ?marcus=grinding+noise+from+front+brakes
  * 
- * Layout:
- *   - Left: FilterSidebar (Smart Filter + brand/vendor/material/tier/price/stock)
- *   - Top: SortTabs (Best Margin | Lowest Cost | Fastest | Marcus's Pick)
- *   - Body: ResultRow grid with all margin/delivery/fitment columns
- * 
- * Filter + sort logic runs client-side on the full result set.
- * In production, initial data comes from /api/parts/search.
+ * Flow:
+ *   1. Parse URL params for query + vehicle context
+ *   2. Call /api/parts/search with query + vehicle
+ *   3. Map API response to B2B result format
+ *   4. Enrich each result with margin calculations from shop rules
+ *   5. Apply client-side filters + sort
+ *   6. Render FilterSidebar + SortTabs + ResultRow grid
  */
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useShop } from '../context/ShopContext';
 import { enrichPartWithMargin } from '../utils/marginCalculator';
+import API from '../config/api';
 import FilterSidebar from './FilterSidebar';
 import SortTabs from './SortTabs';
 import ResultRow from './ResultRow';
 
-// ── Mock data (replaced by API in production) ─────────────────────
-const MOCK_RESULTS = [
-  { id: 1, partName: 'ProACT Ultra-Premium Ceramic Pads', brand: 'Akebono', partNumber: 'ACT1184', material: 'Ceramic', tier: 'best', vendor: 'WorldPac', cost: 28.50, deliveryHours: 3, fitment: 'verified', imageUrl: null, marcusScore: 95, marcusReason: 'OE supplier, verified fit, highest margin' },
-  { id: 2, partName: 'Premium Ceramic Brake Pads', brand: 'Brembo', partNumber: 'P83024N', material: 'Ceramic', tier: 'best', vendor: 'WorldPac', cost: 38.20, deliveryHours: 3, fitment: 'verified', imageUrl: null, marcusScore: 90 },
-  { id: 3, partName: 'ThermoQuiet Ceramic Disc Pads', brand: 'Wagner', partNumber: 'QC1184', material: 'Ceramic', tier: 'better', vendor: 'NAPA', cost: 22.40, deliveryHours: 2, fitment: 'verified', imageUrl: null, marcusScore: 88 },
-  { id: 4, partName: 'Gold Ceramic Brake Pads', brand: 'ACDelco', partNumber: '17D1184CH', material: 'Ceramic', tier: 'better', vendor: "O'Reilly Pro", cost: 24.90, deliveryHours: 4, fitment: 'verified', imageUrl: null, marcusScore: 85 },
-  { id: 5, partName: 'QuietCast Ceramic Disc Pads', brand: 'Bosch', partNumber: 'BC1184', material: 'Ceramic', tier: 'better', vendor: 'AutoZone Pro', cost: 26.80, deliveryHours: 2, fitment: 'verified', imageUrl: null, marcusScore: 86 },
-  { id: 6, partName: 'Ceramic Brake Pads', brand: 'StopTech', partNumber: '309.11840', material: 'Ceramic', tier: 'best', vendor: 'eBay', cost: 32.40, deliveryHours: 48, fitment: 'likely', imageUrl: null, marcusScore: 78 },
-  { id: 7, partName: 'OE Replacement Ceramic Pads', brand: 'Centric', partNumber: '301.11840', material: 'Ceramic', tier: 'better', vendor: 'eBay', cost: 18.90, deliveryHours: 72, fitment: 'likely', imageUrl: null, marcusScore: 72 },
-  { id: 8, partName: 'Posi Quiet Ceramic Brake Pads', brand: 'Centric', partNumber: '105.11840', material: 'Ceramic', tier: 'better', vendor: 'Amazon', cost: 19.50, deliveryHours: 24, fitment: 'likely', imageUrl: null, marcusScore: 74 },
-  { id: 9, partName: 'Advanced Ceramic Disc Brake Pads', brand: 'Power Stop', partNumber: '16-1184', material: 'Ceramic', tier: 'better', vendor: 'Amazon', cost: 21.20, deliveryHours: 24, fitment: 'verified', imageUrl: null, marcusScore: 82 },
-  { id: 10, partName: 'Semi-Metallic Brake Pads', brand: 'Duralast', partNumber: 'MKD1184', material: 'Semi-Metallic', tier: 'good', vendor: 'AutoZone Pro', cost: 14.80, deliveryHours: 1, fitment: 'verified', imageUrl: null, marcusScore: 60 },
-  { id: 11, partName: 'Silver Semi-Metallic Pads', brand: 'ACDelco', partNumber: '14D1184CH', material: 'Semi-Metallic', tier: 'good', vendor: "O'Reilly Pro", cost: 16.20, deliveryHours: 4, fitment: 'verified', imageUrl: null, marcusScore: 62 },
-  { id: 12, partName: 'Ceramic Brake Pads', brand: 'EBC', partNumber: 'DP31584C', material: 'Ceramic', tier: 'best', vendor: 'eBay', cost: 42.00, deliveryHours: 72, fitment: 'unknown', imageUrl: null, marcusScore: 70 },
-];
-
-// ── Default filter state ──────────────────────────────────────────
 const DEFAULT_FILTERS = {
   brands: [],
   vendors: [],
@@ -49,48 +36,217 @@ const DEFAULT_FILTERS = {
   inStockOnly: false,
 };
 
+/**
+ * Known brands for extraction from titles when brand field is missing.
+ * Sorted longest-first so "Power Stop" matches before "Stop".
+ */
+const KNOWN_BRANDS = [
+  'Power Stop', 'ACDelco', 'StopTech', 'Royal Purple', 'Mobil 1',
+  'Akebono', 'Brembo', 'Wagner', 'Bosch', 'Centric', 'EBC', 'Hawk',
+  'Monroe', 'Bilstein', 'KYB', 'Moog', 'Dorman', 'Denso', 'NGK',
+  'Motorcraft', 'Duralast', 'Valucraft', 'Raybestos', 'Bendix',
+  'TRW', 'ATE', 'Textar', 'Ferodo', 'Continental', 'Gates', 'Dayco',
+  'WIX', 'Fram', 'K&N', 'Purolator', 'Castrol', 'Pennzoil',
+  'NTK', 'Delphi', 'AC Delco', 'Beck Arnley', 'Cardone',
+].sort((a, b) => b.length - a.length);
+
+/**
+ * Map a raw API result into the B2B result format that ResultRow expects.
+ * Handles both the unified-result schema and transformResultForFrontend format.
+ */
+function mapApiResult(raw, index) {
+  const price = raw.price || raw.totalPrice || 0;
+  const brand = raw.brand || extractBrandFromTitle(raw.title || raw.name || '') || 'Unknown';
+  const partNumber = raw.partNumber || raw.part_number || '';
+  const title = raw.title || raw.name || 'Auto Part';
+  const imageUrl = raw.imageUrl || raw.image || raw.thumbnailUrl || null;
+  const shippingDays = raw.shipping?.estimatedDays ?? raw.shippingDays ?? null;
+  const freeShipping = raw.shipping?.freeShipping || raw.freeShipping || false;
+
+  let deliveryHours = 72;
+  if (shippingDays !== null && shippingDays !== undefined) {
+    deliveryHours = Math.max(shippingDays, 1) * 24;
+  } else if (freeShipping) {
+    deliveryHours = 48;
+  }
+
+  let fitment = 'unknown';
+  if (raw.fitmentVerified === true || raw.fitment_verified === true) {
+    fitment = 'verified';
+  } else if (raw.fitmentConfidence === 'high' || raw.fitmentConfidence === 'medium') {
+    fitment = 'likely';
+  }
+
+  let tier = 'better';
+  const rawTier = raw.qualityTier || raw.quality_tier || raw.tier || '';
+  if (rawTier === 'best' || rawTier === 'premium') tier = 'best';
+  else if (rawTier === 'good' || rawTier === 'economy') tier = 'good';
+  else if (rawTier === 'better' || rawTier === 'quality') tier = 'better';
+
+  const source = raw.source || raw.retailer || 'eBay';
+
+  return {
+    id: raw.id || raw.sourceItemId || raw.sourceId || `result-${index}`,
+    partName: cleanTitle(title, brand),
+    brand,
+    partNumber,
+    material: detectMaterial(title),
+    tier,
+    vendor: mapSourceToVendor(source),
+    cost: price,
+    deliveryHours,
+    fitment,
+    imageUrl,
+    condition: raw.condition || 'new',
+    sourceUrl: raw.url || raw.itemUrl || raw.affiliateUrl || null,
+    affiliateUrl: raw.affiliateUrl || raw.url || null,
+    marcusScore: raw.relevanceScore || 50,
+    marcusReason: null,
+  };
+}
+
+function extractBrandFromTitle(title) {
+  const titleLower = title.toLowerCase();
+  for (const brand of KNOWN_BRANDS) {
+    if (titleLower.includes(brand.toLowerCase())) return brand;
+  }
+  return null;
+}
+
+function detectMaterial(title) {
+  const lower = title.toLowerCase();
+  if (lower.includes('ceramic')) return 'Ceramic';
+  if (lower.includes('semi-metallic') || lower.includes('semi metallic')) return 'Semi-Metallic';
+  if (lower.includes('organic')) return 'Organic';
+  if (lower.includes('carbon fiber')) return 'Carbon Fiber';
+  return null;
+}
+
+function mapSourceToVendor(source) {
+  const map = {
+    'ebay': 'eBay', 'amazon': 'Amazon', 'autozone': 'AutoZone Pro',
+    'oreilly': "O'Reilly Pro", 'napa': 'NAPA', 'advance': 'Advance Auto',
+    'rockauto': 'RockAuto', 'worldpac': 'WorldPac',
+  };
+  return map[source?.toLowerCase()] || source || 'eBay';
+}
+
+function cleanTitle(title, brand) {
+  let clean = title;
+  if (brand && clean.toLowerCase().startsWith(brand.toLowerCase())) {
+    clean = clean.slice(brand.length).trim();
+    if (clean.startsWith('-') || clean.startsWith('–') || clean.startsWith(',')) {
+      clean = clean.slice(1).trim();
+    }
+  }
+  if (clean.length > 80) clean = clean.slice(0, 77) + '...';
+  return clean || title;
+}
+
 export default function ResultsPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { shop, marginRules } = useShop();
+  const { shop, marginRules, excludedBrands, session } = useShop();
   const accentColor = shop?.accent_color || '#dc2626';
 
-  // Parse URL params
   const query = searchParams.get('q') || searchParams.get('marcus') || '';
   const isMarcusSearch = !!searchParams.get('marcus');
   const year = searchParams.get('year');
   const make = searchParams.get('make');
   const model = searchParams.get('model');
+  const vin = searchParams.get('vin');
   const vehicleLabel = year && make && model ? `${year} ${make} ${model}` : null;
 
-  // ── State ─────────────────────────────────────────────────────
+  const [rawResults, setRawResults] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [searchTime, setSearchTime] = useState(null);
   const [sortBy, setSortBy] = useState(isMarcusSearch ? 'marcus_pick' : 'best_margin');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [smartFilterActive, setSmartFilterActive] = useState(false);
   const [smartFilterText, setSmartFilterText] = useState('');
 
-  // ── Enrich parts with margin calculations ─────────────────────
-  const enrichedResults = useMemo(() => {
-    return MOCK_RESULTS.map((part) => enrichPartWithMargin(part, marginRules, 'brake_pads'));
-  }, [marginRules]);
+  // ── Fetch results from API ────────────────────────────────────
+  useEffect(() => {
+    if (!query) {
+      setLoading(false);
+      return;
+    }
 
-  // ── Derive available filter options from data ─────────────────
+    const controller = new AbortController();
+
+    const fetchResults = async () => {
+      setLoading(true);
+      setError(null);
+      const startTime = Date.now();
+
+      try {
+        const params = new URLSearchParams({ query });
+        if (year) params.set('year', year);
+        if (make) params.set('make', make);
+        if (model) params.set('model', model);
+        if (vin) params.set('vin', vin);
+        params.set('limit', '20');
+        params.set('condition', 'new');
+
+        const url = `${API.parts.search()}?${params.toString()}`;
+        const response = await fetch(url, { signal: controller.signal });
+
+        if (!response.ok) throw new Error(`Search failed (${response.status})`);
+
+        const data = await response.json();
+        setSearchTime(Date.now() - startTime);
+
+        // The API returns results in different shapes
+        let results = [];
+        if (data.parts && Array.isArray(data.parts)) results = data.parts;
+        else if (data.results && Array.isArray(data.results)) results = data.results;
+        else if (data.data && Array.isArray(data.data)) results = data.data;
+
+        const mapped = results.map((raw, i) => mapApiResult(raw, i));
+
+        // Remove shop's excluded brands
+        const filtered = excludedBrands.length > 0
+          ? mapped.filter((p) => !excludedBrands.includes(p.brand))
+          : mapped;
+
+        setRawResults(filtered);
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('[ResultsPage] Search error:', err);
+          setError(err.message || 'Search failed');
+          setRawResults([]);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchResults();
+    return () => controller.abort();
+  }, [query, year, make, model, vin, excludedBrands]);
+
+  // ── Enrich with margin calculations ───────────────────────────
+  const enrichedResults = useMemo(() => {
+    return rawResults.map((part) => enrichPartWithMargin(part, marginRules, part.partType));
+  }, [rawResults, marginRules]);
+
+  // ── Derive available filter options ───────────────────────────
   const availableBrands = useMemo(() => [...new Set(enrichedResults.map((p) => p.brand))].sort(), [enrichedResults]);
   const availableVendors = useMemo(() => [...new Set(enrichedResults.map((p) => p.vendor))].sort(), [enrichedResults]);
   const availableMaterials = useMemo(() => [...new Set(enrichedResults.map((p) => p.material).filter(Boolean))].sort(), [enrichedResults]);
 
-  // Brand and vendor counts
   const brandCounts = useMemo(() => {
-    const counts = {};
-    enrichedResults.forEach((p) => { counts[p.brand] = (counts[p.brand] || 0) + 1; });
-    return counts;
+    const c = {};
+    enrichedResults.forEach((p) => { c[p.brand] = (c[p.brand] || 0) + 1; });
+    return c;
   }, [enrichedResults]);
 
   const vendorCounts = useMemo(() => {
-    const counts = {};
-    enrichedResults.forEach((p) => { counts[p.vendor] = (counts[p.vendor] || 0) + 1; });
-    return counts;
+    const c = {};
+    enrichedResults.forEach((p) => { c[p.vendor] = (c[p.vendor] || 0) + 1; });
+    return c;
   }, [enrichedResults]);
 
   // ── Filter results ────────────────────────────────────────────
@@ -136,16 +292,47 @@ export default function ResultsPage() {
     });
   }, []);
 
-  const handleAddToOrder = useCallback((part) => {
-    alert(`Added to order: ${part.brand} ${part.partName} — Cost: $${part.cost.toFixed(2)}, List: $${part.listPrice.toFixed(2)}, Margin: +$${part.margin.toFixed(2)}`);
-  }, []);
+  const handleAddToOrder = useCallback(async (part) => {
+    try {
+      const token = session?.access_token;
+      if (!token) {
+        alert('Session expired. Please sign in again.');
+        return;
+      }
+
+      const response = await fetch(API.b2b.orders(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          vehicle_context: vehicleLabel ? { year, make, model } : null,
+          part_name: part.partName,
+          part_number: part.partNumber || null,
+          brand: part.brand,
+          vendor: part.vendor,
+          cost: part.cost,
+          list_price: part.listPrice,
+          source: part.vendor?.toLowerCase() === 'ebay' ? 'ebay' : 'other',
+          source_url: part.affiliateUrl || part.sourceUrl || null,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to create order');
+
+      alert(`✓ Added: ${part.brand} ${part.partName}\nCost: $${part.cost.toFixed(2)} → List: $${part.listPrice.toFixed(2)} → Margin: +$${part.margin.toFixed(2)}`);
+    } catch (err) {
+      console.error('[ResultsPage] Add to order error:', err);
+      alert('Failed to add to order. Please try again.');
+    }
+  }, [session, vehicleLabel, year, make, model]);
 
   const handleBulkAddToOrder = useCallback(() => {
     const selected = sortedResults.filter((p) => selectedIds.has(p.id));
-    const totalMargin = selected.reduce((sum, p) => sum + p.margin, 0);
-    alert(`Adding ${selected.length} parts to order — Total margin: +$${totalMargin.toFixed(2)}`);
+    selected.forEach((part) => handleAddToOrder(part));
     setSelectedIds(new Set());
-  }, [sortedResults, selectedIds]);
+  }, [sortedResults, selectedIds, handleAddToOrder]);
 
   // ── Smart Filter handlers ─────────────────────────────────────
   const handleSmartFilterApply = useCallback((parsed, text) => {
@@ -168,15 +355,68 @@ export default function ResultsPage() {
     setSmartFilterText('');
   }, []);
 
+  // ── Loading state ─────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="max-w-screen-2xl mx-auto">
+        <div className="px-6 py-3 bg-white border-b border-gray-200 flex items-center gap-3">
+          <button onClick={() => navigate('/')} className="text-gray-400 hover:text-gray-600 transition-colors">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <div>
+            <h1 className="text-base font-bold text-gray-900">{query}</h1>
+            {vehicleLabel && <p className="text-xs text-gray-400">for {vehicleLabel}</p>}
+          </div>
+        </div>
+        <div className="flex items-center justify-center py-32">
+          <div className="text-center">
+            <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-600 rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-sm text-gray-500 font-medium">Searching parts...</p>
+            <p className="text-xs text-gray-400 mt-1">Checking eBay, Amazon, and local suppliers</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Error state ───────────────────────────────────────────────
+  if (error) {
+    return (
+      <div className="max-w-screen-2xl mx-auto">
+        <div className="px-6 py-3 bg-white border-b border-gray-200 flex items-center gap-3">
+          <button onClick={() => navigate('/')} className="text-gray-400 hover:text-gray-600 transition-colors">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h1 className="text-base font-bold text-gray-900">{query}</h1>
+        </div>
+        <div className="flex items-center justify-center py-32">
+          <div className="text-center">
+            <div className="text-4xl mb-4">⚠️</div>
+            <h3 className="text-base font-semibold text-gray-800 mb-2">Search failed</h3>
+            <p className="text-sm text-gray-400 mb-4">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 text-xs font-semibold rounded-lg text-white transition-colors"
+              style={{ background: accentColor }}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-screen-2xl mx-auto">
       {/* Search context bar */}
       <div className="px-6 py-3 bg-white border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/')}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
+          <button onClick={() => navigate('/')} className="text-gray-400 hover:text-gray-600 transition-colors">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
@@ -195,8 +435,10 @@ export default function ResultsPage() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Margin summary */}
+        <div className="flex items-center gap-4">
+          {searchTime && (
+            <span className="text-[11px] text-gray-300">{(searchTime / 1000).toFixed(1)}s</span>
+          )}
           {sortedResults.length > 0 && (
             <div className="text-right">
               <div className="text-[10px] text-gray-400">Avg margin on page</div>
@@ -210,7 +452,6 @@ export default function ResultsPage() {
 
       {/* Main layout */}
       <div className="flex">
-        {/* Left sidebar */}
         <FilterSidebar
           filters={filters}
           onFilterChange={setFilters}
@@ -225,9 +466,7 @@ export default function ResultsPage() {
           smartFilterText={smartFilterText}
         />
 
-        {/* Results area */}
         <div className="flex-1 min-w-0">
-          {/* Sort tabs */}
           <SortTabs
             sortBy={sortBy}
             onSortChange={setSortBy}
@@ -269,20 +508,27 @@ export default function ResultsPage() {
           ) : (
             <div className="px-12 py-20 text-center">
               <div className="text-4xl mb-4">🔍</div>
-              <h3 className="text-base font-semibold text-gray-800 mb-2">No results match your filters</h3>
+              <h3 className="text-base font-semibold text-gray-800 mb-2">
+                {enrichedResults.length === 0 ? 'No results found' : 'No results match your filters'}
+              </h3>
               <p className="text-sm text-gray-400 mb-4">
-                Try relaxing your filters or clearing them to see all {enrichedResults.length} results.
+                {enrichedResults.length === 0
+                  ? 'Try a different search term or check the vehicle info.'
+                  : `Try relaxing your filters or clearing them to see all ${enrichedResults.length} results.`
+                }
               </p>
-              <button
-                onClick={() => { setFilters(DEFAULT_FILTERS); handleSmartFilterClear(); }}
-                className="px-4 py-2 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                Clear all filters
-              </button>
+              {enrichedResults.length > 0 && (
+                <button
+                  onClick={() => { setFilters(DEFAULT_FILTERS); handleSmartFilterClear(); }}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Clear all filters
+                </button>
+              )}
             </div>
           )}
 
-          {/* Bottom margin summary */}
+          {/* Bottom summary */}
           {sortedResults.length > 0 && (
             <div className="px-5 py-3 bg-gray-50/50 border-t border-gray-200 flex items-center justify-between">
               <div className="flex items-center gap-6 text-xs text-gray-400">
