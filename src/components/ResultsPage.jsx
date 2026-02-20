@@ -47,13 +47,30 @@ const DEFAULT_FILTERS = {
  * Sorted longest-first so "Power Stop" matches before "Stop".
  */
 const KNOWN_BRANDS = [
-  'Power Stop', 'ACDelco', 'StopTech', 'Royal Purple', 'Mobil 1',
-  'Akebono', 'Brembo', 'Wagner', 'Bosch', 'Centric', 'EBC', 'Hawk',
-  'Monroe', 'Bilstein', 'KYB', 'Moog', 'Dorman', 'Denso', 'NGK',
-  'Motorcraft', 'Duralast', 'Valucraft', 'Raybestos', 'Bendix',
-  'TRW', 'ATE', 'Textar', 'Ferodo', 'Continental', 'Gates', 'Dayco',
+  // Multi-word brands (must be first for longest-match-wins)
+  'Power Stop', 'Royal Purple', 'Mobil 1', 'Beck Arnley', 'AC Delco',
+  'Detroit Axle', 'Complete Struts', 'Unity Automotive', 'FCS Auto',
+  'Gabriel Ultra', 'Monroe Quick', 'KYB Excel', 'Sensa Trac',
+  'Energy Suspension', 'Mevotech Supreme', 'Detroit Speed',
+  // Premium / OEM
+  'Akebono', 'Brembo', 'StopTech', 'Bilstein', 'Hawk', 'EBC',
+  'ACDelco', 'Motorcraft', 'Genuine',
+  // Quality tier
+  'Wagner', 'Bosch', 'Centric', 'Monroe', 'KYB', 'Moog', 'Denso',
+  'NGK', 'Power Stop', 'Raybestos', 'Gabriel', 'Sachs', 'Arnott',
+  'Continental', 'Gates', 'Dayco', 'Delphi', 'NTK', 'Bendix',
+  'TRW', 'ATE', 'Textar', 'Ferodo', 'Cardone', 'Spectra',
+  'Standard', 'Four Seasons', 'Valeo', 'Hella', 'SKF', 'Timken',
+  'National', 'FAG', 'Koyo', 'NSK', 'NTN',
+  // Economy tier
+  'Dorman', 'Duralast', 'Valucraft', 'A-Premium', 'SCITOO',
+  'ECCPP', 'AUXITO', 'GSP', 'DLZ', 'CTCAUTO', 'TRQ', 'Callahan',
+  'DRIVESTAR', 'Shoxtec', 'PHILTOP', 'OREDY', 'Aintier',
+  // Filters / fluids
   'WIX', 'Fram', 'K&N', 'Purolator', 'Castrol', 'Pennzoil',
-  'NTK', 'Delphi', 'AC Delco', 'Beck Arnley', 'Cardone',
+  'Valvoline', 'Amsoil', 'Lucas', 'STP', 'Prestone',
+  // General
+  'Beck Arnley', 'Mevotech', 'Sensen', 'Unity', 'FCS',
 ].sort((a, b) => b.length - a.length);
 
 /**
@@ -62,13 +79,54 @@ const KNOWN_BRANDS = [
  * Optionally tags with _groupLabel for multi-part grouped display.
  */
 function mapApiResult(raw, index, groupLabel) {
-  const price = raw.price || raw.totalPrice || 0;
-  const brand = raw.brand || extractBrandFromTitle(raw.title || raw.name || '') || 'Unknown';
-  const partNumber = raw.partNumber || raw.part_number || '';
-  const title = raw.title || raw.name || 'Auto Part';
-  const imageUrl = raw.imageUrl || raw.image || raw.thumbnailUrl || null;
-  const shippingDays = raw.shipping?.estimatedDays ?? raw.shippingDays ?? null;
-  const freeShipping = raw.shipping?.freeShipping || raw.freeShipping || false;
+  // Detect format: consolidated (from aggregator) vs raw unified result
+  const isConsolidated = !!(raw.bestPrice || raw.sources);
+
+  let price, brand, partNumber, title, imageUrl, shippingDays, freeShipping;
+  let fitVerified, fitConfidence, tier, source, sourceUrl, affiliateUrl, score;
+
+  if (isConsolidated) {
+    // ── Consolidated part format (Kayak model) ──────────────
+    const bestSrc = raw.sources?.find((s) => s.status === 'active') || raw.sources?.[0] || {};
+    price = raw.bestPrice?.totalPrice || raw.bestPrice?.price || bestSrc.totalPrice || bestSrc.price || 0;
+    brand = raw.brand || extractBrandFromTitle(raw.title || raw.fullTitle || '') || 'Unknown';
+    partNumber = raw.partNumber || bestSrc.partNumber || '';
+    title = raw.title || raw.fullTitle || 'Auto Part';
+    imageUrl = typeof raw.image === 'string' ? raw.image : (raw.image?.imageUrl || bestSrc.imageUrl || null);
+    shippingDays = bestSrc.shipping?.estimatedDays ?? null;
+    freeShipping = bestSrc.shipping?.freeShipping || bestSrc.shippingCostType === 'FREE' || false;
+    fitVerified = bestSrc.fitmentVerified || false;
+    fitConfidence = bestSrc.fitmentConfidence || raw.fitmentConfidence || 'unknown';
+    source = bestSrc.source || 'ebay';
+    sourceUrl = bestSrc.url || bestSrc.itemUrl || null;
+    affiliateUrl = bestSrc.affiliateUrl || sourceUrl;
+    score = raw.relevanceScore || 50;
+
+    const qt = raw.qualityTier || '';
+    tier = qt === 'premium' || qt === 'oem' ? 'best'
+      : qt === 'economy' ? 'good'
+      : 'better';
+  } else {
+    // ── Raw unified result format (original) ────────────────
+    price = raw.price || raw.totalPrice || 0;
+    brand = raw.brand || extractBrandFromTitle(raw.title || raw.name || '') || 'Unknown';
+    partNumber = raw.partNumber || raw.part_number || '';
+    title = raw.title || raw.name || 'Auto Part';
+    imageUrl = raw.imageUrl || raw.image || raw.thumbnailUrl || null;
+    shippingDays = raw.shipping?.estimatedDays ?? raw.shippingDays ?? null;
+    freeShipping = raw.shipping?.freeShipping || raw.freeShipping || false;
+    fitVerified = raw.fitmentVerified === true || raw.fitment_verified === true;
+    fitConfidence = raw.fitmentConfidence || 'unknown';
+    source = raw.source || raw.retailer || 'eBay';
+    sourceUrl = raw.url || raw.itemUrl || raw.affiliateUrl || null;
+    affiliateUrl = raw.affiliateUrl || raw.url || null;
+    score = raw.relevanceScore || 50;
+
+    const rawTier = raw.qualityTier || raw.quality_tier || raw.tier || '';
+    tier = rawTier === 'best' || rawTier === 'premium' || rawTier === 'oem' ? 'best'
+      : rawTier === 'good' || rawTier === 'economy' ? 'good'
+      : 'better';
+  }
 
   let deliveryHours = 72;
   if (shippingDays !== null && shippingDays !== undefined) {
@@ -78,19 +136,8 @@ function mapApiResult(raw, index, groupLabel) {
   }
 
   let fitment = 'unknown';
-  if (raw.fitmentVerified === true || raw.fitment_verified === true) {
-    fitment = 'verified';
-  } else if (raw.fitmentConfidence === 'high' || raw.fitmentConfidence === 'medium') {
-    fitment = 'likely';
-  }
-
-  let tier = 'better';
-  const rawTier = raw.qualityTier || raw.quality_tier || raw.tier || '';
-  if (rawTier === 'best' || rawTier === 'premium') tier = 'best';
-  else if (rawTier === 'good' || rawTier === 'economy') tier = 'good';
-  else if (rawTier === 'better' || rawTier === 'quality') tier = 'better';
-
-  const source = raw.source || raw.retailer || 'eBay';
+  if (fitVerified) fitment = 'verified';
+  else if (fitConfidence === 'high' || fitConfidence === 'medium') fitment = 'likely';
 
   return {
     id: raw.id || raw.sourceItemId || raw.sourceId || `result-${groupLabel || 'single'}-${index}`,
@@ -105,9 +152,9 @@ function mapApiResult(raw, index, groupLabel) {
     fitment,
     imageUrl,
     condition: raw.condition || 'new',
-    sourceUrl: raw.url || raw.itemUrl || raw.affiliateUrl || null,
-    affiliateUrl: raw.affiliateUrl || raw.url || null,
-    marcusScore: raw.relevanceScore || 50,
+    sourceUrl,
+    affiliateUrl,
+    marcusScore: score,
     marcusReason: null,
     _groupLabel: groupLabel || null,
   };
@@ -197,7 +244,8 @@ export default function ResultsPage() {
   const [smartFilterActive, setSmartFilterActive] = useState(false);
   const [smartFilterText, setSmartFilterText] = useState('');
   const [partGroups, setPartGroups] = useState([]);
-  const [marcusStatus, setMarcusStatus] = useState(null); // 'diagnosing' | 'searching' | 'done'
+  const [marcusStatus, setMarcusStatus] = useState(null);
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const [marcusSummary, setMarcusSummary] = useState('');
   const [marcusDetails, setMarcusDetails] = useState(null);
 
@@ -531,6 +579,15 @@ export default function ResultsPage() {
   }, []);
 
   // ── Helper: render rows with group dividers for multi-part ────
+  const toggleGroupCollapse = useCallback((label) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }, []);
+
   const renderResultRows = () => {
     if ((!isMultiPart && !isMarcusSearch) || partGroups.length === 0) {
       return sortedResults.map((part) => (
@@ -546,7 +603,6 @@ export default function ResultsPage() {
       ));
     }
 
-    // Multi-part: insert group headers between sections
     const rows = [];
     let lastGroup = null;
 
@@ -556,13 +612,22 @@ export default function ResultsPage() {
       if (groupLabel !== lastGroup) {
         const groupCount = sortedResults.filter((p) => p._groupLabel === groupLabel).length;
         const groupInfo = partGroups.find((g) => g.label === groupLabel);
+        const isCollapsed = collapsedGroups.has(groupLabel);
 
         rows.push(
           <div
             key={`group-header-${groupLabel}`}
-            className="px-5 py-2.5 bg-gray-50 border-b border-t border-gray-200 flex items-center justify-between"
+            id={`group-${groupLabel}`}
+            className="px-5 py-2.5 bg-gray-50 border-b border-t border-gray-200 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors"
+            onClick={() => toggleGroupCollapse(groupLabel)}
           >
             <div className="flex items-center gap-2">
+              <svg
+                className={`w-4 h-4 text-gray-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
               <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">
                 {groupLabel}
               </span>
@@ -570,25 +635,33 @@ export default function ResultsPage() {
                 {groupCount} result{groupCount !== 1 ? 's' : ''}
               </span>
             </div>
-            {groupInfo?.error && (
-              <span className="text-[10px] text-amber-500">⚠ Search issue</span>
-            )}
+            <div className="flex items-center gap-3">
+              {groupInfo?.error && (
+                <span className="text-[10px] text-amber-500">⚠ Search issue</span>
+              )}
+              {isCollapsed && groupCount > 0 && (
+                <span className="text-[10px] text-gray-400 italic">Click to expand</span>
+              )}
+            </div>
           </div>
         );
         lastGroup = groupLabel;
       }
 
-      rows.push(
-        <ResultRow
-          key={part.id}
-          part={part}
-          isSelected={selectedIds.has(part.id)}
-          onSelect={toggleSelect}
-          isMarcusPick={part.id === marcusPickId}
-          showMarcusBanner={sortBy === 'marcus_pick'}
-          onAddToOrder={handleAddToOrder}
-        />
-      );
+      // Only render rows if group is not collapsed
+      if (!collapsedGroups.has(groupLabel)) {
+        rows.push(
+          <ResultRow
+            key={part.id}
+            part={part}
+            isSelected={selectedIds.has(part.id)}
+            onSelect={toggleSelect}
+            isMarcusPick={part.id === marcusPickId}
+            showMarcusBanner={sortBy === 'marcus_pick'}
+            onAddToOrder={handleAddToOrder}
+          />
+        );
+      }
     }
 
     return rows;
@@ -715,11 +788,24 @@ export default function ResultsPage() {
       {(isMultiPart || (isMarcusSearch && partGroups.length > 0)) && partGroups.length > 0 && (
         <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-4 overflow-x-auto">
           {partGroups.map((group) => (
-            <div key={group.label} className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              key={group.label}
+              onClick={() => {
+                const el = document.getElementById(`group-${group.label}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Auto-expand if collapsed
+                setCollapsedGroups((prev) => {
+                  const next = new Set(prev);
+                  next.delete(group.label);
+                  return next;
+                });
+              }}
+              className="flex items-center gap-1.5 flex-shrink-0 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors"
+            >
               <span className={`w-2 h-2 rounded-full ${group.count > 0 ? 'bg-green-400' : 'bg-gray-300'}`} />
               <span className="text-[11px] text-gray-600 font-medium">{group.label}</span>
               <span className="text-[10px] text-gray-400">({group.count})</span>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -733,18 +819,38 @@ export default function ResultsPage() {
               <p className="text-sm font-medium text-amber-900">{marcusSummary}</p>
               {marcusDetails && (
                 <div className="flex flex-wrap gap-2 mt-2">
-                  {(marcusDetails.essential || []).map((p, i) => (
-                    <span key={`e-${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 border border-amber-200 rounded-full text-[11px] font-medium text-amber-800">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
-                      {p.name}
-                    </span>
-                  ))}
-                  {(marcusDetails.recommended || []).map((p, i) => (
-                    <span key={`r-${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded-full text-[11px] font-medium text-amber-700">
-                      <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-                      {p.name}
-                    </span>
-                  ))}
+                  {(marcusDetails.essential || []).map((p, i) => {
+                    const label = p.name.replace(/\b\w/g, (c) => c.toUpperCase());
+                    return (
+                      <button
+                        key={`e-${i}`}
+                        onClick={() => {
+                          const el = document.getElementById(`group-${label}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 border border-amber-200 rounded-full text-[11px] font-medium text-amber-800 hover:bg-amber-200 transition-colors cursor-pointer"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                  {(marcusDetails.recommended || []).map((p, i) => {
+                    const label = p.name.replace(/\b\w/g, (c) => c.toUpperCase());
+                    return (
+                      <button
+                        key={`r-${i}`}
+                        onClick={() => {
+                          const el = document.getElementById(`group-${label}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded-full text-[11px] font-medium text-amber-700 hover:bg-amber-200 transition-colors cursor-pointer"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+                        {p.name}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
