@@ -95,6 +95,9 @@ export default function DashboardHome() {
   const [selectedTrim, setSelectedTrim] = useState('');
   const [selectedEngine, setSelectedEngine] = useState('');
   const [ymmLoading, setYmmLoading] = useState(false);
+  const [quickText, setQuickText] = useState('');
+  const [quickParsing, setQuickParsing] = useState(false);
+  const [quickError, setQuickError] = useState('');
 
   // ── Part Search state ───────────────────────────────────────────
   const [partSearchQuery, setPartSearchQuery] = useState('');
@@ -267,6 +270,90 @@ export default function DashboardHome() {
     } catch (err) {
       console.error('[DashboardHome] Failed to load engines:', err);
     } finally { setYmmLoading(false); }
+  };
+
+  const handleQuickLookup = async () => {
+    const text = quickText.trim();
+    if (!text) return;
+
+    setQuickParsing(true);
+    setQuickError('');
+
+    try {
+      const yearMatch = text.match(/\b(19|20)\d{2}\b/);
+      if (!yearMatch) {
+        setQuickError('Could not find a year. Try: 2019 Toyota Tacoma');
+        return;
+      }
+      const parsedYear = yearMatch[0];
+      const afterYear = text.replace(yearMatch[0], '').trim();
+
+      const makesRes = await fetch(API.vehicles.makes(parsedYear));
+      const makesData = await makesRes.json();
+      const makeList = makesData.data || makesData.makes || makesData || [];
+      const makeNames = makeList.map((m) => (typeof m === 'object' ? m.name || m.make : m)).filter(Boolean);
+
+      const textLower = afterYear.toLowerCase();
+      const matchedMake = makeNames.find((m) => textLower.startsWith(m.toLowerCase()));
+      if (!matchedMake) {
+        setQuickError(`Could not match a make for ${parsedYear}. Try: ${parsedYear} Toyota Tacoma`);
+        return;
+      }
+
+      const afterMake = afterYear.slice(afterYear.toLowerCase().indexOf(matchedMake.toLowerCase()) + matchedMake.length).trim();
+
+      const modelsRes = await fetch(API.vehicles.models(parsedYear, matchedMake));
+      const modelsData = await modelsRes.json();
+      const modelList = modelsData.data || modelsData.models || modelsData || [];
+      const modelNames = modelList.map((m) => (typeof m === 'object' ? m.name || m.model : m)).filter(Boolean);
+
+      const afterMakeLower = afterMake.toLowerCase();
+      const matchedModel = modelNames
+        .sort((a, b) => b.length - a.length)
+        .find((m) => afterMakeLower.startsWith(m.toLowerCase()));
+
+      if (!matchedModel) {
+        setQuickError(`Could not match a model for ${parsedYear} ${matchedMake}. Check spelling.`);
+        return;
+      }
+
+      const afterModel = afterMake.slice(afterMake.toLowerCase().indexOf(matchedModel.toLowerCase()) + matchedModel.length).trim();
+
+      let parsedTrim = '';
+      let parsedEngine = '';
+
+      if (afterModel) {
+        const trimsRes = await fetch(API.vehicles.trims(parsedYear, matchedMake, matchedModel));
+        const trimsData = await trimsRes.json();
+        const trimList = trimsData.data || trimsData.trims || trimsData || [];
+        const trimNames = trimList.map((t) => (typeof t === 'object' ? t.name || t.trim || t : t)).filter(Boolean);
+        const uniqueTrims = [...new Set(trimNames)];
+
+        const afterModelLower = afterModel.toLowerCase();
+        const matchedTrim = uniqueTrims
+          .sort((a, b) => b.length - a.length)
+          .find((t) => afterModelLower.includes(t.toLowerCase()));
+
+        if (matchedTrim) parsedTrim = matchedTrim;
+
+        const enginePatterns = afterModel.match(/(\d+\.\d+\s*[Ll]|\d+[Ll]|[Vv]\d+|\d+-[Cc]yl(?:inder)?|[Tt]urbo|[Dd]iesel|[Hh]ybrid|[Ee]lectric)/g);
+        if (enginePatterns) parsedEngine = enginePatterns.join(' ');
+      }
+
+      setVehicleContext({
+        year: parsedYear,
+        make: matchedMake,
+        model: matchedModel,
+        trim: parsedTrim,
+        engine: parsedEngine,
+      });
+      setQuickText('');
+    } catch (err) {
+      console.error('[DashboardHome] Quick lookup failed:', err);
+      setQuickError('Lookup failed. Try using VIN or Year/Make/Model.');
+    } finally {
+      setQuickParsing(false);
+    }
   };
 
   const handleYearChange = (year) => { setSelectedYear(year); setEngines([]); setSelectedEngine(''); loadMakes(year); };
@@ -519,6 +606,33 @@ export default function DashboardHome() {
 
               {activePanel === 'vehicle' ? (
                 <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={quickText}
+                      onChange={(e) => { setQuickText(e.target.value); setQuickError(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleQuickLookup(); }}
+                      placeholder="Paste vehicle info — 2019 Toyota Tacoma TRD"
+                      className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all pr-20"
+                      disabled={quickParsing}
+                    />
+                    <button
+                      onClick={handleQuickLookup}
+                      disabled={!quickText.trim() || quickParsing}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 px-3 py-1.5 text-[11px] font-semibold rounded-lg text-white transition-all disabled:opacity-30"
+                      style={{ background: accentColor }}
+                    >
+                      {quickParsing ? '...' : 'Go'}
+                    </button>
+                  </div>
+                  {quickError && (
+                    <p className="text-[11px] text-red-500 px-1">{quickError}</p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-px bg-gray-200" />
+                    <span className="text-[10px] text-gray-300 font-medium uppercase">or use</span>
+                    <div className="flex-1 h-px bg-gray-200" />
+                  </div>
                   <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
                     <button
                       onClick={() => { setVehicleLookupMode('vin'); setVehicleError(''); }}
