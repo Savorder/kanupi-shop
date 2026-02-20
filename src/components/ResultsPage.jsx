@@ -197,6 +197,9 @@ export default function ResultsPage() {
   const [smartFilterActive, setSmartFilterActive] = useState(false);
   const [smartFilterText, setSmartFilterText] = useState('');
   const [partGroups, setPartGroups] = useState([]);
+  const [marcusStatus, setMarcusStatus] = useState(null); // 'diagnosing' | 'searching' | 'done'
+  const [marcusSummary, setMarcusSummary] = useState('');
+  const [marcusDetails, setMarcusDetails] = useState(null);
 
   // ── Fetch results from API ────────────────────────────────────
   useEffect(() => {
@@ -241,6 +244,9 @@ export default function ResultsPage() {
     const fetchResults = async () => {
       setLoading(true);
       setError(null);
+      setMarcusStatus(null);
+      setMarcusSummary('');
+      setMarcusDetails(null);
       const startTime = Date.now();
 
       try {
@@ -267,6 +273,64 @@ export default function ResultsPage() {
               groups.push({ label, count: 0, error: result.reason?.message || null });
             }
           });
+
+        } else if (isMarcusSearch) {
+          // ── Marcus AI: diagnose symptom first, then multi-part search ──
+          setMarcusStatus('diagnosing');
+
+          const diagPayload = { query };
+          if (year && make && model) {
+            diagPayload.vehicle = { year, make, model };
+          }
+
+          const token = session?.access_token;
+          const diagRes = await fetch(`${API.baseUrl}/api/b2b/marcus/diagnose`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(diagPayload),
+            signal: controller.signal,
+          });
+
+          if (!diagRes.ok) throw new Error(`Marcus diagnosis failed (${diagRes.status})`);
+          const diagData = await diagRes.json();
+
+          if (!diagData.success || !diagData.understood || diagData.parts.length === 0) {
+            setMarcusSummary(diagData.summary || 'Could not determine parts from this description.');
+            setMarcusStatus('done');
+            setSearchTime(Date.now() - startTime);
+            setRawResults([]);
+            return;
+          }
+
+          setMarcusSummary(diagData.summary);
+          setMarcusDetails(diagData.details);
+          setMarcusStatus('searching');
+
+          // Search for each diagnosed part
+          const searchPairs = diagData.parts.map((partName, i) => ({
+            query: partName,
+            label: diagData.labels[i] || partName,
+          }));
+
+          const results = await Promise.allSettled(
+            searchPairs.map((pair) => fetchSinglePart(pair.query, pair.label))
+          );
+
+          results.forEach((result, i) => {
+            const label = searchPairs[i].label;
+            if (result.status === 'fulfilled' && result.value.length > 0) {
+              allMapped.push(...result.value);
+              groups.push({ label, count: result.value.length });
+            } else {
+              groups.push({ label, count: 0, error: result.reason?.message || null });
+            }
+          });
+
+          setMarcusStatus('done');
+
         } else {
           // ── Single-part: original behavior ──────────────────────
           const url = buildSearchUrl(query);
@@ -376,7 +440,7 @@ export default function ResultsPage() {
       }
     };
 
-    if (isMultiPart && partGroups.length > 0) {
+    if ((isMultiPart || isMarcusSearch) && partGroups.length > 0) {
       // Keep group order intact, sort within each group
       const grouped = [];
       for (const group of partGroups) {
@@ -468,7 +532,7 @@ export default function ResultsPage() {
 
   // ── Helper: render rows with group dividers for multi-part ────
   const renderResultRows = () => {
-    if (!isMultiPart || partGroups.length === 0) {
+    if ((!isMultiPart && !isMarcusSearch) || partGroups.length === 0) {
       return sortedResults.map((part) => (
         <ResultRow
           key={part.id}
@@ -540,22 +604,32 @@ export default function ResultsPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <div>
-            <h1 className="text-base font-bold text-gray-900">{headerLabel}</h1>
-            {vehicleLabel && <p className="text-xs text-gray-400">for {vehicleLabel}</p>}
-          </div>
+          <h1 className="text-base font-bold text-gray-900">{headerLabel}</h1>
         </div>
         <div className="flex items-center justify-center py-32">
           <div className="text-center">
-            <div className="w-10 h-10 border-3 border-gray-200 border-t-gray-600 rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-sm text-gray-500 font-medium">
-              {isMultiPart ? `Searching ${partQueries.length} parts...` : 'Searching parts...'}
-            </p>
-            <p className="text-xs text-gray-400 mt-1">
-              {isMultiPart
-                ? partLabels.join(', ')
-                : 'Checking eBay, Amazon, and local suppliers'
-              }
+            <div className="w-10 h-10 border-3 rounded-full animate-spin mx-auto mb-4" style={{ borderColor: `${accentColor}22`, borderTopColor: accentColor }} />
+            <h3 className="text-base font-semibold text-gray-800 mb-1">
+              {marcusStatus === 'diagnosing'
+                ? '🤖 Marcus is diagnosing...'
+                : marcusStatus === 'searching'
+                  ? '🔍 Searching for parts...'
+                  : isMarcusSearch
+                    ? '🤖 Marcus is analyzing...'
+                    : isMultiPart
+                      ? `Searching ${partQueries.length} parts...`
+                      : 'Searching suppliers...'}
+            </h3>
+            <p className="text-sm text-gray-400">
+              {marcusStatus === 'diagnosing'
+                ? `Analyzing: "${query}"`
+                : marcusStatus === 'searching' && marcusSummary
+                  ? marcusSummary
+                  : isMarcusSearch
+                    ? 'Diagnosing the issue and finding parts'
+                    : isMultiPart
+                      ? 'Running parallel searches across all vendors'
+                      : 'Checking eBay, Amazon, and local suppliers'}
             </p>
           </div>
         </div>
@@ -638,7 +712,7 @@ export default function ResultsPage() {
       </div>
 
       {/* Multi-part summary banner — shows status dots for each part searched */}
-      {isMultiPart && partGroups.length > 0 && (
+      {(isMultiPart || (isMarcusSearch && partGroups.length > 0)) && partGroups.length > 0 && (
         <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-4 overflow-x-auto">
           {partGroups.map((group) => (
             <div key={group.label} className="flex items-center gap-1.5 flex-shrink-0">
@@ -647,6 +721,34 @@ export default function ResultsPage() {
               <span className="text-[10px] text-gray-400">({group.count})</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Marcus diagnosis banner — shows what Marcus identified */}
+      {isMarcusSearch && marcusSummary && marcusStatus === 'done' && (
+        <div className="px-6 py-3 bg-amber-50 border-b border-amber-100">
+          <div className="flex items-start gap-3">
+            <span className="text-lg flex-shrink-0">🤖</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-amber-900">{marcusSummary}</p>
+              {marcusDetails && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {(marcusDetails.essential || []).map((p, i) => (
+                    <span key={`e-${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 border border-amber-200 rounded-full text-[11px] font-medium text-amber-800">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                      {p.name}
+                    </span>
+                  ))}
+                  {(marcusDetails.recommended || []).map((p, i) => (
+                    <span key={`r-${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded-full text-[11px] font-medium text-amber-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+                      {p.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -725,7 +827,7 @@ export default function ResultsPage() {
                 <span>Showing {sortedResults.length} of {enrichedResults.length} results</span>
                 <span>·</span>
                 <span>Cost range: <span className="font-mono text-gray-600">${Math.min(...sortedResults.map(p => p.cost)).toFixed(2)} – ${Math.max(...sortedResults.map(p => p.cost)).toFixed(2)}</span></span>
-                {isMultiPart && (
+                {(isMultiPart || (isMarcusSearch && partGroups.length > 0)) && (
                   <>
                     <span>·</span>
                     <span>{partGroups.filter(g => g.count > 0).length} of {partGroups.length} parts found</span>
