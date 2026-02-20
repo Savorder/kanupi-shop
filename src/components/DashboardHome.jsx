@@ -26,6 +26,7 @@ import PART_CATEGORIES from '../config/partCategories';
 import { getRelatedParts } from '../config/relatedParts';
 import RelatedPartsDrawer from './RelatedPartsDrawer';
 import API from '../config/api';
+import MarcusAvatar from './MarcusAvatar';
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD',
@@ -760,7 +761,7 @@ export default function DashboardHome() {
         >
           <div className="p-5">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: hasVehicle ? `${accentColor}12` : '#f3f4f6' }}>🤖</div>
+              <MarcusAvatar size="xl" className="rounded-xl" />
               <div>
                 <h2 className={`font-bold ${hasVehicle ? 'text-gray-900' : 'text-gray-400'}`}>Ask Marcus</h2>
                 <p className="text-xs text-gray-400">
@@ -855,7 +856,7 @@ export default function DashboardHome() {
                     }}
                   >
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0" style={{ background: isMarcus ? '#fef3c7' : `${accentColor}12` }}>
-                      {isMarcus ? '🤖' : '🔧'}
+                      {isMarcus ? <MarcusAvatar size="sm" /> : '🔧'}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
