@@ -1,13 +1,17 @@
 /**
- * DashboardHome — Three-panel entry point for the B2B shop dashboard.
+ * DashboardHome — Vehicle-first entry point for the B2B shop dashboard.
+ * 
+ * Flow:
+ *   1. VEHICLE FIRST — Decode via VIN, License Plate, or Year/Make/Model dropdowns
+ *   2. Once vehicle is set, Part Search and Marcus panels unlock
+ *   3. All searches carry the vehicle context automatically
  * 
  * Panels:
- *   1. Vehicle Lookup (VIN + License Plate toggle)
- *   2. Part Search (text search + RockAuto-style category browser)
- *   3. Ask Marcus (AI diagnosis from customer symptoms)
+ *   1. Vehicle Lookup (VIN + License Plate + Year/Make/Model toggle)
+ *   2. Part Search (text search + category browser) — requires vehicle
+ *   3. Ask Marcus (AI diagnosis) — requires vehicle
  * 
- * Below panels: Recent Searches + Recent Orders with margin tracking.
- * Top: Time-aware greeting + daily stats (searches, orders, revenue, margin).
+ * Top: Time-aware greeting + daily stats
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -23,25 +27,33 @@ const US_STATES = [
 ];
 
 export default function DashboardHome() {
-  const { shop, setVehicleContext } = useShop();
+  const { shop, vehicle, setVehicleContext, clearVehicle } = useShop();
   const navigate = useNavigate();
   const accentColor = shop?.accent_color || '#dc2626';
 
   // ── Panel state ─────────────────────────────────────────────────
-  const [activePanel, setActivePanel] = useState(null);
+  const [activePanel, setActivePanel] = useState(vehicle ? null : 'vehicle');
 
   // ── Vehicle Lookup state ────────────────────────────────────────
   const [vehicleLookupMode, setVehicleLookupMode] = useState('vin');
   const [vinInput, setVinInput] = useState('');
   const [plateInput, setPlateInput] = useState('');
   const [plateState, setPlateState] = useState(shop?.state || 'OR');
-  const [vehicleDecoded, setVehicleDecoded] = useState(null);
   const [vehicleLoading, setVehicleLoading] = useState(false);
   const [vehicleError, setVehicleError] = useState('');
-  const [vehiclePartQuery, setVehiclePartQuery] = useState('');
+
+  // ── Year/Make/Model dropdown state ──────────────────────────────
+  const [years, setYears] = useState([]);
+  const [makes, setMakes] = useState([]);
+  const [models, setModels] = useState([]);
+  const [trims, setTrims] = useState([]);
+  const [selectedYear, setSelectedYear] = useState('');
+  const [selectedMake, setSelectedMake] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedTrim, setSelectedTrim] = useState('');
+  const [ymmLoading, setYmmLoading] = useState(false);
 
   // ── Part Search state ───────────────────────────────────────────
-  const [partSearchVehicle, setPartSearchVehicle] = useState('');
   const [partSearchQuery, setPartSearchQuery] = useState('');
   const [partSearchMode, setPartSearchMode] = useState('browse');
   const [expandedCategory, setExpandedCategory] = useState(null);
@@ -64,7 +76,117 @@ export default function DashboardHome() {
     return 'Good evening';
   };
 
-  // ── Vehicle decode ──────────────────────────────────────────────
+  // ── Load years on mount ─────────────────────────────────────────
+  useEffect(() => {
+    if (vehicleLookupMode === 'ymm' && years.length === 0) {
+      loadYears();
+    }
+  }, [vehicleLookupMode]);
+
+  const loadYears = async () => {
+    try {
+      const res = await fetch(API.vehicles.years());
+      const data = await res.json();
+      const yearList = data.data || data.years || data || [];
+      const sorted = Array.isArray(yearList)
+        ? yearList.sort((a, b) => b - a)
+        : [];
+      setYears(sorted);
+    } catch (err) {
+      console.error('[DashboardHome] Failed to load years:', err);
+    }
+  };
+
+  const loadMakes = async (year) => {
+    setMakes([]);
+    setModels([]);
+    setTrims([]);
+    setSelectedMake('');
+    setSelectedModel('');
+    setSelectedTrim('');
+    if (!year) return;
+    try {
+      setYmmLoading(true);
+      const res = await fetch(API.vehicles.makes(year));
+      const data = await res.json();
+      const makeList = data.data || data.makes || data || [];
+      setMakes(Array.isArray(makeList) ? makeList.sort() : []);
+    } catch (err) {
+      console.error('[DashboardHome] Failed to load makes:', err);
+    } finally {
+      setYmmLoading(false);
+    }
+  };
+
+  const loadModels = async (year, make) => {
+    setModels([]);
+    setTrims([]);
+    setSelectedModel('');
+    setSelectedTrim('');
+    if (!year || !make) return;
+    try {
+      setYmmLoading(true);
+      const res = await fetch(API.vehicles.models(year, make));
+      const data = await res.json();
+      const modelList = data.data || data.models || data || [];
+      setModels(Array.isArray(modelList) ? modelList.sort() : []);
+    } catch (err) {
+      console.error('[DashboardHome] Failed to load models:', err);
+    } finally {
+      setYmmLoading(false);
+    }
+  };
+
+  const loadTrims = async (year, make, model) => {
+    setTrims([]);
+    setSelectedTrim('');
+    if (!year || !make || !model) return;
+    try {
+      setYmmLoading(true);
+      const res = await fetch(API.vehicles.trims(year, make, model));
+      const data = await res.json();
+      const trimList = data.data || data.trims || data || [];
+      setTrims(Array.isArray(trimList) ? trimList : []);
+    } catch (err) {
+      console.error('[DashboardHome] Failed to load trims:', err);
+    } finally {
+      setYmmLoading(false);
+    }
+  };
+
+  // ── Year/Make/Model select handlers ─────────────────────────────
+  const handleYearChange = (year) => {
+    setSelectedYear(year);
+    loadMakes(year);
+  };
+
+  const handleMakeChange = (make) => {
+    setSelectedMake(make);
+    loadModels(selectedYear, make);
+  };
+
+  const handleModelChange = (model) => {
+    setSelectedModel(model);
+    loadTrims(selectedYear, selectedMake, model);
+  };
+
+  const handleTrimChange = (trim) => {
+    setSelectedTrim(trim);
+  };
+
+  const handleYmmSelect = () => {
+    if (!selectedYear || !selectedMake || !selectedModel) return;
+    const decoded = {
+      year: selectedYear,
+      make: selectedMake,
+      model: selectedModel,
+      trim: selectedTrim || '',
+      engine: '',
+    };
+    setVehicleContext(decoded);
+  };
+
+  // ── VIN / Plate decode ──────────────────────────────────────────
   const handleVehicleDecode = useCallback(async () => {
     if (vehicleLookupMode === 'vin' && vinInput.length < 17) return;
     if (vehicleLookupMode === 'plate' && plateInput.length < 2) return;
@@ -103,7 +225,6 @@ export default function DashboardHome() {
         engine: vehicleData.engine || '',
       };
 
-      setVehicleDecoded(decoded);
       setVehicleContext(decoded);
     } catch (err) {
       setVehicleError(err.message || 'Failed to decode vehicle');
@@ -112,10 +233,30 @@ export default function DashboardHome() {
     }
   }, [vehicleLookupMode, vinInput, plateInput, plateState, setVehicleContext]);
 
+  // ── Change vehicle (clear and reset) ────────────────────────────
+  const handleChangeVehicle = () => {
+    clearVehicle();
+    setVinInput('');
+    setPlateInput('');
+    setSelectedYear('');
+    setSelectedMake('');
+    setSelectedModel('');
+    setSelectedTrim('');
+    setMakes([]);
+    setModels([]);
+    setTrims([]);
+    setVehicleError('');
+    setActivePanel('vehicle');
+  };
+
   // ── Navigate to results ─────────────────────────────────────────
-  const goToResults = useCallback((query, vehicle) => {
+  const goToResults = useCallback((query, isMarcus = false) => {
     const params = new URLSearchParams();
-    if (query) params.set('q', query);
+    if (isMarcus) {
+      params.set('marcus', query);
+    } else {
+      params.set('q', query);
+    }
     if (vehicle) {
       if (vehicle.year) params.set('year', vehicle.year);
       if (vehicle.make) params.set('make', vehicle.make);
@@ -123,39 +264,48 @@ export default function DashboardHome() {
       if (vehicle.vin) params.set('vin', vehicle.vin);
     }
     navigate(`/results?${params.toString()}`);
-  }, [navigate]);
-
-  const handleVehiclePartSearch = () => {
-    if (!vehiclePartQuery.trim() || !vehicleDecoded) return;
-    goToResults(vehiclePartQuery, vehicleDecoded);
-  };
+  }, [navigate, vehicle]);
 
   const handlePartSelect = (partKey, partLabel) => {
-    goToResults(partLabel, null);
+    goToResults(partLabel);
   };
 
   const handlePartSearchSubmit = () => {
     if (!partSearchQuery.trim()) return;
-    goToResults(partSearchQuery, null);
+    goToResults(partSearchQuery);
   };
 
   const handleMarcusSubmit = () => {
     if (!marcusInput.trim()) return;
-    // Marcus flows through the AI diagnostic — navigate to results with diagnostic context
-    const params = new URLSearchParams();
-    params.set('marcus', marcusInput);
-    navigate(`/results?${params.toString()}`);
+    goToResults(marcusInput, true);
   };
 
+  // ── Derived state ───────────────────────────────────────────────
+  const hasVehicle = !!vehicle;
   const vinOrPlateValid = vehicleLookupMode === 'vin' ? vinInput.length >= 17 : plateInput.length >= 2;
-
-  // ── Quick stats (placeholder — will come from API) ──────────────
+  const ymmValid = selectedYear && selectedMake && selectedModel;
   const stats = { searches: 24, orders: 7, revenue: 847.50, avgMargin: 38.2 };
+
+  // ── Locked panel overlay ────────────────────────────────────────
+  const LockedOverlay = () => (
+    <div className="mt-4 px-4 py-6 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center">
+      <div className="text-2xl mb-2">🔒</div>
+      <p className="text-xs font-semibold text-gray-500 mb-1">Vehicle required</p>
+      <p className="text-[11px] text-gray-400 mb-3">Decode a vehicle first to search parts</p>
+      <button
+        onClick={() => setActivePanel('vehicle')}
+        className="px-4 py-1.5 text-xs font-semibold rounded-lg text-white transition-colors"
+        style={{ background: accentColor }}
+      >
+        Set Vehicle →
+      </button>
+    </div>
+  );
 
   return (
     <div className="max-w-screen-xl mx-auto px-6 py-8">
       {/* ── Greeting + Stats ─────────────────────────────────────── */}
-      <div className="flex items-end justify-between mb-8">
+      <div className="flex items-end justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{greeting()}</h1>
           <p className="text-sm text-gray-400 mt-0.5">
@@ -177,188 +327,280 @@ export default function DashboardHome() {
         </div>
       </div>
 
+      {/* ── Active Vehicle Bar ────────────────────────────────────── */}
+      {hasVehicle && (
+        <div className="mb-6 bg-white rounded-2xl border-2 border-green-200 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl bg-green-50">🚗</div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-base font-bold text-gray-900">
+                  {vehicle.year} {vehicle.make} {vehicle.model} {vehicle.trim}
+                </span>
+                <span className="text-[10px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">✓ Active</span>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
+                {vehicle.engine && <span>{vehicle.engine}</span>}
+                {vehicle.vin && (
+                  <>
+                    {vehicle.engine && <span>·</span>}
+                    <span className="font-mono">{vehicle.vin}</span>
+                  </>
+                )}
+                {vehicle.plate && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono">{vehicle.state} {vehicle.plate}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleChangeVehicle}
+            className="px-4 py-2 text-xs font-semibold text-gray-500 hover:text-gray-800 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors"
+          >
+            Change Vehicle
+          </button>
+        </div>
+      )}
+
       {/* ── Three Panels ─────────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-4 mb-8">
 
-        {/* ── Panel 1: Vehicle Lookup ──────────────────────────── */}
-        <div
-          className={`rounded-2xl border-2 transition-all ${
-            activePanel === 'vehicle'
-              ? 'border-gray-900 bg-white shadow-lg'
-              : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
-          }`}
-          onClick={() => { if (activePanel !== 'vehicle') setActivePanel('vehicle'); }}
-        >
-          <div className="p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: `${accentColor}12` }}>🚗</div>
-              <div>
-                <h2 className="font-bold text-gray-900">Vehicle Lookup</h2>
-                <p className="text-xs text-gray-400">VIN or license plate</p>
-              </div>
-            </div>
-
-            {activePanel === 'vehicle' ? (
-              <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-                {/* VIN / Plate toggle */}
-                <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
-                  <button
-                    onClick={() => { setVehicleLookupMode('vin'); setVehicleDecoded(null); setVehicleError(''); }}
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                      vehicleLookupMode === 'vin' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
-                    🔑 VIN
-                  </button>
-                  <button
-                    onClick={() => { setVehicleLookupMode('plate'); setVehicleDecoded(null); setVehicleError(''); }}
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                      vehicleLookupMode === 'plate' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
-                    🪪 License Plate
-                  </button>
+        {/* ── Panel 1: Vehicle Lookup ──────────────────────────────── */}
+        {!hasVehicle && (
+          <div
+            className={`rounded-2xl border-2 transition-all ${
+              activePanel === 'vehicle'
+                ? 'border-gray-900 bg-white shadow-lg'
+                : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
+            }`}
+            onClick={() => { if (activePanel !== 'vehicle') setActivePanel('vehicle'); }}
+          >
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: `${accentColor}12` }}>🚗</div>
+                <div>
+                  <h2 className="font-bold text-gray-900">Vehicle Lookup</h2>
+                  <p className="text-xs text-gray-400">VIN, plate, or year/make/model</p>
                 </div>
+              </div>
 
-                {/* VIN input */}
-                {vehicleLookupMode === 'vin' && (
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={vinInput}
-                      onChange={(e) => { setVinInput(e.target.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '').slice(0, 17)); setVehicleDecoded(null); setVehicleError(''); }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleVehicleDecode(); }}
-                      placeholder="Enter 17-character VIN"
-                      maxLength={17}
-                      className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all pr-14 font-mono-input"
-                      autoFocus
-                    />
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 font-medium font-mono">
-                      {vinInput.length}/17
-                    </div>
-                  </div>
-                )}
-
-                {/* Plate input */}
-                {vehicleLookupMode === 'plate' && (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={plateInput}
-                      onChange={(e) => { setPlateInput(e.target.value.toUpperCase().slice(0, 8)); setVehicleDecoded(null); setVehicleError(''); }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleVehicleDecode(); }}
-                      placeholder="Plate #"
-                      maxLength={8}
-                      className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all font-mono-input"
-                      autoFocus
-                    />
-                    <select
-                      value={plateState}
-                      onChange={(e) => setPlateState(e.target.value)}
-                      className="w-20 px-2 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 font-medium"
-                    >
-                      {US_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                {/* Error message */}
-                {vehicleError && (
-                  <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-xs text-red-600">{vehicleError}</p>
-                  </div>
-                )}
-
-                {/* Decode button */}
-                {!vehicleDecoded && (
-                  <button
-                    onClick={handleVehicleDecode}
-                    disabled={!vinOrPlateValid || vehicleLoading}
-                    className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30"
-                    style={{ background: accentColor }}
-                  >
-                    {vehicleLoading ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Decoding...
-                      </span>
-                    ) : vehicleLookupMode === 'vin' ? 'Decode VIN' : 'Look Up Plate'}
-                  </button>
-                )}
-
-                {/* Decoded vehicle card */}
-                {vehicleDecoded && (
-                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-gray-900">
-                        {vehicleDecoded.year} {vehicleDecoded.make} {vehicleDecoded.model} {vehicleDecoded.trim}
-                      </span>
-                      <span className="text-[10px] px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-medium">✓ Decoded</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-gray-400">
-                      <span>{vehicleDecoded.engine}</span>
-                      {vehicleDecoded.plate && (
-                        <>
-                          <span>·</span>
-                          <span className="font-mono">{vehicleDecoded.state} {vehicleDecoded.plate}</span>
-                        </>
-                      )}
-                    </div>
-                    <input
-                      type="text"
-                      value={vehiclePartQuery}
-                      onChange={(e) => setVehiclePartQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleVehiclePartSearch(); }}
-                      placeholder="What part do you need?"
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-gray-400 transition-all"
-                    />
+              {activePanel === 'vehicle' ? (
+                <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+                  {/* VIN / Plate / YMM toggle */}
+                  <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
                     <button
-                      onClick={handleVehiclePartSearch}
-                      disabled={!vehiclePartQuery.trim()}
-                      className="w-full py-2 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-30"
-                      style={{ background: accentColor }}
+                      onClick={() => { setVehicleLookupMode('vin'); setVehicleError(''); }}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                        vehicleLookupMode === 'vin' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
                     >
-                      Search Parts →
+                      🔑 VIN
+                    </button>
+                    <button
+                      onClick={() => { setVehicleLookupMode('plate'); setVehicleError(''); }}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                        vehicleLookupMode === 'plate' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      🪪 Plate
+                    </button>
+                    <button
+                      onClick={() => { setVehicleLookupMode('ymm'); setVehicleError(''); if (years.length === 0) loadYears(); }}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                        vehicleLookupMode === 'ymm' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      📋 Y/M/M
                     </button>
                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="mt-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-100">
-                <span className="text-xs text-gray-400">Decode a VIN or license plate for exact-fit parts</span>
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* ── Panel 2: Part Search ─────────────────────────────── */}
+                  {/* VIN input */}
+                  {vehicleLookupMode === 'vin' && (
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={vinInput}
+                        onChange={(e) => { setVinInput(e.target.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '').slice(0, 17)); setVehicleError(''); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleVehicleDecode(); }}
+                        placeholder="Enter 17-character VIN"
+                        maxLength={17}
+                        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all pr-14 font-mono"
+                        autoFocus
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 font-medium font-mono">
+                        {vinInput.length}/17
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Plate input */}
+                  {vehicleLookupMode === 'plate' && (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={plateInput}
+                        onChange={(e) => { setPlateInput(e.target.value.toUpperCase().slice(0, 8)); setVehicleError(''); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleVehicleDecode(); }}
+                        placeholder="Plate #"
+                        maxLength={8}
+                        className="flex-1 px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all font-mono"
+                        autoFocus
+                      />
+                      <select
+                        value={plateState}
+                        onChange={(e) => setPlateState(e.target.value)}
+                        className="w-20 px-2 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 font-medium"
+                      >
+                        {US_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Year/Make/Model dropdowns */}
+                  {vehicleLookupMode === 'ymm' && (
+                    <div className="space-y-2">
+                      {/* Year */}
+                      <select
+                        value={selectedYear}
+                        onChange={(e) => handleYearChange(e.target.value)}
+                        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700"
+                      >
+                        <option value="">Select Year</option>
+                        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+                      </select>
+
+                      {/* Make */}
+                      <select
+                        value={selectedMake}
+                        onChange={(e) => handleMakeChange(e.target.value)}
+                        disabled={!selectedYear || makes.length === 0}
+                        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 disabled:opacity-40 disabled:bg-gray-50"
+                      >
+                        <option value="">{ymmLoading && !selectedMake ? 'Loading...' : 'Select Make'}</option>
+                        {makes.map((m) => {
+                          const name = typeof m === 'object' ? m.name || m.make : m;
+                          return <option key={name} value={name}>{name}</option>;
+                        })}
+                      </select>
+
+                      {/* Model */}
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => handleModelChange(e.target.value)}
+                        disabled={!selectedMake || models.length === 0}
+                        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 disabled:opacity-40 disabled:bg-gray-50"
+                      >
+                        <option value="">{ymmLoading && !selectedModel ? 'Loading...' : 'Select Model'}</option>
+                        {models.map((m) => {
+                          const name = typeof m === 'object' ? m.name || m.model : m;
+                          return <option key={name} value={name}>{name}</option>;
+                        })}
+                      </select>
+
+                      {/* Trim (optional) */}
+                      {trims.length > 0 && (
+                        <select
+                          value={selectedTrim}
+                          onChange={(e) => handleTrimChange(e.target.value)}
+                          className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700"
+                        >
+                          <option value="">Trim (optional)</option>
+                          {trims.map((t) => {
+                            const name = typeof t === 'object' ? t.name || t.trim : t;
+                            return <option key={name} value={name}>{name}</option>;
+                          })}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Error message */}
+                  {vehicleError && (
+                    <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                      <p className="text-xs text-red-600">{vehicleError}</p>
+                    </div>
+                  )}
+
+                  {/* Action button — VIN/Plate decode or YMM select */}
+                  {vehicleLookupMode === 'ymm' ? (
+                    <button
+                      onClick={handleYmmSelect}
+                      disabled={!ymmValid || ymmLoading}
+                      className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30"
+                      style={{ background: accentColor }}
+                    >
+                      {ymmLoading ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Loading...
+                        </span>
+                      ) : 'Select Vehicle'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleVehicleDecode}
+                      disabled={!vinOrPlateValid || vehicleLoading}
+                      className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30"
+                      style={{ background: accentColor }}
+                    >
+                      {vehicleLoading ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Decoding...
+                        </span>
+                      ) : vehicleLookupMode === 'vin' ? 'Decode VIN' : 'Look Up Plate'}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-100">
+                  <span className="text-xs text-gray-400">Decode a VIN, plate, or select year/make/model</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Panel 2: Part Search ─────────────────────────────────── */}
         <div
           className={`rounded-2xl border-2 transition-all ${
             activePanel === 'part'
               ? 'border-gray-900 bg-white shadow-lg'
-              : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
+              : hasVehicle
+                ? 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
+                : 'border-gray-200 bg-gray-50/50 cursor-pointer'
           }`}
-          onClick={() => { if (activePanel !== 'part') setActivePanel('part'); }}
+          onClick={() => {
+            if (activePanel !== 'part') {
+              setActivePanel(hasVehicle ? 'part' : 'vehicle');
+            }
+          }}
         >
           <div className="p-5">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: `${accentColor}12` }}>🔧</div>
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: hasVehicle ? `${accentColor}12` : '#f3f4f6' }}>🔧</div>
               <div>
-                <h2 className="font-bold text-gray-900">Part Search</h2>
-                <p className="text-xs text-gray-400">Search or browse by category</p>
+                <h2 className={`font-bold ${hasVehicle ? 'text-gray-900' : 'text-gray-400'}`}>Part Search</h2>
+                <p className="text-xs text-gray-400">
+                  {hasVehicle
+                    ? `Search for ${vehicle.year} ${vehicle.make} ${vehicle.model}`
+                    : 'Set vehicle first'
+                  }
+                </p>
               </div>
             </div>
 
-            {activePanel === 'part' ? (
+            {!hasVehicle ? (
+              activePanel === 'part' ? <LockedOverlay /> : (
+                <div className="mt-2 px-3 py-2 bg-gray-100 rounded-lg border border-gray-200">
+                  <span className="text-xs text-gray-400">🔒 Decode a vehicle first to search parts</span>
+                </div>
+              )
+            ) : activePanel === 'part' ? (
               <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-                <input
-                  type="text"
-                  value={partSearchVehicle}
-                  onChange={(e) => setPartSearchVehicle(e.target.value)}
-                  placeholder="Vehicle (optional — e.g. 2019 Honda Accord)"
-                  className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-gray-400 transition-all"
-                />
-
                 {/* Browse / Search toggle */}
                 <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
                   <button
@@ -469,31 +711,48 @@ export default function DashboardHome() {
           </div>
         </div>
 
-        {/* ── Panel 3: Ask Marcus ──────────────────────────────── */}
+        {/* ── Panel 3: Ask Marcus ───────────────────────────────────── */}
         <div
           className={`rounded-2xl border-2 transition-all ${
             activePanel === 'marcus'
               ? 'border-gray-900 bg-white shadow-lg'
-              : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
+              : hasVehicle
+                ? 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
+                : 'border-gray-200 bg-gray-50/50 cursor-pointer'
           }`}
-          onClick={() => { if (activePanel !== 'marcus') setActivePanel('marcus'); }}
+          onClick={() => {
+            if (activePanel !== 'marcus') {
+              setActivePanel(hasVehicle ? 'marcus' : 'vehicle');
+            }
+          }}
         >
           <div className="p-5">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: `${accentColor}12` }}>🤖</div>
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style={{ background: hasVehicle ? `${accentColor}12` : '#f3f4f6' }}>🤖</div>
               <div>
-                <h2 className="font-bold text-gray-900">Ask Marcus</h2>
-                <p className="text-xs text-gray-400">AI-powered diagnosis</p>
+                <h2 className={`font-bold ${hasVehicle ? 'text-gray-900' : 'text-gray-400'}`}>Ask Marcus</h2>
+                <p className="text-xs text-gray-400">
+                  {hasVehicle
+                    ? `AI diagnosis for ${vehicle.year} ${vehicle.make} ${vehicle.model}`
+                    : 'Set vehicle first'
+                  }
+                </p>
               </div>
             </div>
 
-            {activePanel === 'marcus' ? (
+            {!hasVehicle ? (
+              activePanel === 'marcus' ? <LockedOverlay /> : (
+                <div className="mt-2 px-3 py-2 bg-gray-100 rounded-lg border border-gray-200">
+                  <span className="text-xs text-gray-400">🔒 Decode a vehicle first for diagnosis</span>
+                </div>
+              )
+            ) : activePanel === 'marcus' ? (
               <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
                 <textarea
                   value={marcusInput}
                   onChange={(e) => setMarcusInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleMarcusSubmit(); } }}
-                  placeholder={"Describe the customer's issue...\n\ne.g. 2018 F-150, grinding noise from front when braking at low speed. Started last week."}
+                  placeholder={"Describe the customer's issue...\n\ne.g. Grinding noise from front when braking at low speed. Started last week."}
                   className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all resize-none"
                   rows={4}
                   autoFocus
@@ -527,7 +786,7 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* ── Keyboard Shortcut Hints ──────────────────────────────── */}
+      {/* ── Keyboard Shortcut Hints ────────────────────────────────── */}
       <div className="flex items-center justify-center gap-6">
         {[
           { keys: 'V', label: 'Vehicle Lookup' },
