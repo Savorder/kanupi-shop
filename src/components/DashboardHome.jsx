@@ -980,7 +980,7 @@ export default function DashboardHome() {
                         className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
                         style={{ background: `${partIcon.color}12`, border: `1px solid ${partIcon.color}25` }}
                       >
-                        {partIcon.icon(partIcon.color)}
+                        <partIcon.Icon size={18} strokeWidth={1.75} color={partIcon.color} />
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
