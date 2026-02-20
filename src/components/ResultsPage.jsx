@@ -682,7 +682,7 @@ export default function ResultsPage() {
         </div>
         <div className="flex items-center justify-center py-32">
           <div className="text-center">
-            isMarcusSearch ? (
+            {isMarcusSearch ? (
               <MarcusAvatar size="lg" className="mx-auto mb-4 animate-pulse" />
             ) : (
               <div className="w-10 h-10 border-3 rounded-full animate-spin mx-auto mb-4" style={{ borderColor: `${accentColor}22`, borderTopColor: accentColor }} />
