@@ -19,6 +19,8 @@ import LoginPage from './components/LoginPage';
 import DashboardHome from './components/DashboardHome';
 import ResultsPage from './components/ResultsPage';
 import OrderHistory from './components/OrderHistory';
+import PreferencesPage from './components/PreferencesPage';
+import SettingsPage from './components/SettingsPage';
 
 function AuthGate({ children }) {
   const { isAuthenticated, isLoading } = useShop();
@@ -55,6 +57,8 @@ export default function App() {
                 <Route path="/" element={<DashboardHome />} />
                 <Route path="/results" element={<ResultsPage />} />
                 <Route path="/orders" element={<OrderHistory />} />
+                <Route path="/preferences" element={<PreferencesPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </div>
