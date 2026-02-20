@@ -26,6 +26,7 @@ import PART_CATEGORIES from '../config/partCategories';
 import { getRelatedParts } from '../config/relatedParts';
 import RelatedPartsDrawer from './RelatedPartsDrawer';
 import API from '../config/api';
+import { getPartIcon } from '../config/partIcons';
 import MarcusAvatar from './MarcusAvatar';
 
 const US_STATES = [
@@ -954,6 +955,7 @@ export default function DashboardHome() {
                   ? `${vc.year} ${vc.make} ${vc.model}`
                   : null;
                 const isMarcus = search.search_type === 'marcus';
+                const partIcon = getPartIcon(search.query);
 
                 return (
                   <div
@@ -969,9 +971,18 @@ export default function DashboardHome() {
                       navigate(`/results?${params.toString()}`);
                     }}
                   >
-                    <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0" style={{ background: isMarcus ? '#fef3c7' : `${accentColor}12` }}>
-                      {isMarcus ? <MarcusAvatar size="sm" /> : '🔧'}
-                    </div>
+                    {isMarcus ? (
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-amber-50 border border-amber-100">
+                        <MarcusAvatar size="sm" />
+                      </div>
+                    ) : (
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                        style={{ background: `${partIcon.color}12`, border: `1px solid ${partIcon.color}25` }}
+                      >
+                        {partIcon.icon(partIcon.color)}
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-gray-800 truncate">{search.query}</span>
