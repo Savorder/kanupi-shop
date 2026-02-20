@@ -4,7 +4,8 @@
  * Flow:
  *   1. VEHICLE FIRST — Decode via VIN, License Plate, or Year/Make/Model dropdowns
  *   2. Once vehicle is set, Part Search and Marcus panels unlock
- *   3. All searches carry the vehicle context automatically
+ *   3. Part selection opens RelatedPartsDrawer for position + related parts
+ *   4. Multi-part search navigates to grouped results
  * 
  * Panels:
  *   1. Vehicle Lookup (VIN + License Plate + Year/Make/Model toggle)
@@ -18,6 +19,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useShop } from '../context/ShopContext';
 import PART_CATEGORIES from '../config/partCategories';
+import { getRelatedParts } from '../config/relatedParts';
+import RelatedPartsDrawer from './RelatedPartsDrawer';
 import API from '../config/api';
 
 const US_STATES = [
@@ -59,6 +62,10 @@ export default function DashboardHome() {
   const [expandedCategory, setExpandedCategory] = useState(null);
   const [expandedSubcategory, setExpandedSubcategory] = useState(null);
 
+  // ── Related Parts Drawer state ──────────────────────────────────
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerPartLabel, setDrawerPartLabel] = useState('');
+
   // ── Marcus state ────────────────────────────────────────────────
   const [marcusInput, setMarcusInput] = useState('');
 
@@ -88,9 +95,7 @@ export default function DashboardHome() {
       const res = await fetch(API.vehicles.years());
       const data = await res.json();
       const yearList = data.data || data.years || data || [];
-      const sorted = Array.isArray(yearList)
-        ? yearList.sort((a, b) => b - a)
-        : [];
+      const sorted = Array.isArray(yearList) ? yearList.sort((a, b) => b - a) : [];
       setYears(sorted);
     } catch (err) {
       console.error('[DashboardHome] Failed to load years:', err);
@@ -98,12 +103,8 @@ export default function DashboardHome() {
   };
 
   const loadMakes = async (year) => {
-    setMakes([]);
-    setModels([]);
-    setTrims([]);
-    setSelectedMake('');
-    setSelectedModel('');
-    setSelectedTrim('');
+    setMakes([]); setModels([]); setTrims([]);
+    setSelectedMake(''); setSelectedModel(''); setSelectedTrim('');
     if (!year) return;
     try {
       setYmmLoading(true);
@@ -113,16 +114,12 @@ export default function DashboardHome() {
       setMakes(Array.isArray(makeList) ? makeList.sort() : []);
     } catch (err) {
       console.error('[DashboardHome] Failed to load makes:', err);
-    } finally {
-      setYmmLoading(false);
-    }
+    } finally { setYmmLoading(false); }
   };
 
   const loadModels = async (year, make) => {
-    setModels([]);
-    setTrims([]);
-    setSelectedModel('');
-    setSelectedTrim('');
+    setModels([]); setTrims([]);
+    setSelectedModel(''); setSelectedTrim('');
     if (!year || !make) return;
     try {
       setYmmLoading(true);
@@ -132,14 +129,11 @@ export default function DashboardHome() {
       setModels(Array.isArray(modelList) ? modelList.sort() : []);
     } catch (err) {
       console.error('[DashboardHome] Failed to load models:', err);
-    } finally {
-      setYmmLoading(false);
-    }
+    } finally { setYmmLoading(false); }
   };
 
   const loadTrims = async (year, make, model) => {
-    setTrims([]);
-    setSelectedTrim('');
+    setTrims([]); setSelectedTrim('');
     if (!year || !make || !model) return;
     try {
       setYmmLoading(true);
@@ -152,41 +146,23 @@ export default function DashboardHome() {
       setTrims(unique);
     } catch (err) {
       console.error('[DashboardHome] Failed to load trims:', err);
-    } finally {
-      setYmmLoading(false);
-    }
+    } finally { setYmmLoading(false); }
   };
 
-  // ── Year/Make/Model select handlers ─────────────────────────────
-  const handleYearChange = (year) => {
-    setSelectedYear(year);
-    loadMakes(year);
-  };
-
-  const handleMakeChange = (make) => {
-    setSelectedMake(make);
-    loadModels(selectedYear, make);
-  };
-
-  const handleModelChange = (model) => {
-    setSelectedModel(model);
-    loadTrims(selectedYear, selectedMake, model);
-  };
-
-  const handleTrimChange = (trim) => {
-    setSelectedTrim(trim);
-  };
+  const handleYearChange = (year) => { setSelectedYear(year); loadMakes(year); };
+  const handleMakeChange = (make) => { setSelectedMake(make); loadModels(selectedYear, make); };
+  const handleModelChange = (model) => { setSelectedModel(model); loadTrims(selectedYear, selectedMake, model); };
+  const handleTrimChange = (trim) => { setSelectedTrim(trim); };
 
   const handleYmmSelect = () => {
     if (!selectedYear || !selectedMake || !selectedModel) return;
-    const decoded = {
+    setVehicleContext({
       year: selectedYear,
       make: selectedMake,
       model: selectedModel,
       trim: selectedTrim || '',
       engine: '',
-    };
-    setVehicleContext(decoded);
+    });
   };
 
   // ── VIN / Plate decode ──────────────────────────────────────────
@@ -199,7 +175,6 @@ export default function DashboardHome() {
 
     try {
       let response;
-
       if (vehicleLookupMode === 'vin') {
         response = await fetch(API.vehicles.decodeVin(vinInput));
       } else {
@@ -210,14 +185,12 @@ export default function DashboardHome() {
         });
       }
 
-      if (!response.ok) {
-        throw new Error('Vehicle not found. Please check and try again.');
-      }
+      if (!response.ok) throw new Error('Vehicle not found. Please check and try again.');
 
       const data = await response.json();
       const vehicleData = data.vehicle || data;
 
-      const decoded = {
+      setVehicleContext({
         vin: vehicleData.vin || vinInput.toUpperCase(),
         plate: vehicleLookupMode === 'plate' ? plateInput.toUpperCase() : null,
         state: vehicleLookupMode === 'plate' ? plateState : null,
@@ -226,9 +199,7 @@ export default function DashboardHome() {
         model: vehicleData.model,
         trim: vehicleData.trim || '',
         engine: vehicleData.engine || '',
-      };
-
-      setVehicleContext(decoded);
+      });
     } catch (err) {
       setVehicleError(err.message || 'Failed to decode vehicle');
     } finally {
@@ -236,23 +207,17 @@ export default function DashboardHome() {
     }
   }, [vehicleLookupMode, vinInput, plateInput, plateState, setVehicleContext]);
 
-  // ── Change vehicle (clear and reset) ────────────────────────────
+  // ── Change vehicle ──────────────────────────────────────────────
   const handleChangeVehicle = () => {
     clearVehicle();
-    setVinInput('');
-    setPlateInput('');
-    setSelectedYear('');
-    setSelectedMake('');
-    setSelectedModel('');
-    setSelectedTrim('');
-    setMakes([]);
-    setModels([]);
-    setTrims([]);
+    setVinInput(''); setPlateInput('');
+    setSelectedYear(''); setSelectedMake(''); setSelectedModel(''); setSelectedTrim('');
+    setMakes([]); setModels([]); setTrims([]);
     setVehicleError('');
     setActivePanel('vehicle');
   };
 
-  // ── Navigate to results ─────────────────────────────────────────
+  // ── Navigate to results (single or multi-part) ─────────────────
   const goToResults = useCallback((query, isMarcus = false) => {
     const params = new URLSearchParams();
     if (isMarcus) {
@@ -269,13 +234,51 @@ export default function DashboardHome() {
     navigate(`/results?${params.toString()}`);
   }, [navigate, vehicle]);
 
+  const goToMultiPartResults = useCallback((queries) => {
+    const params = new URLSearchParams();
+    params.set('parts', JSON.stringify(queries.map((q) => q.query)));
+    params.set('labels', JSON.stringify(queries.map((q) => q.label)));
+    if (queries.length === 1) {
+      params.set('q', queries[0].query);
+    }
+    if (vehicle) {
+      if (vehicle.year) params.set('year', vehicle.year);
+      if (vehicle.make) params.set('make', vehicle.make);
+      if (vehicle.model) params.set('model', vehicle.model);
+      if (vehicle.vin) params.set('vin', vehicle.vin);
+    }
+    navigate(`/results?${params.toString()}`);
+  }, [navigate, vehicle]);
+
+  // ── Part selection → opens drawer or goes direct ────────────────
   const handlePartSelect = (partKey, partLabel) => {
-    goToResults(partLabel);
+    const intel = getRelatedParts(partLabel);
+    if (intel) {
+      setDrawerPartLabel(partLabel);
+      setDrawerOpen(true);
+    } else {
+      goToResults(partLabel);
+    }
   };
 
   const handlePartSearchSubmit = () => {
     if (!partSearchQuery.trim()) return;
-    goToResults(partSearchQuery);
+    const intel = getRelatedParts(partSearchQuery.trim());
+    if (intel) {
+      setDrawerPartLabel(partSearchQuery.trim());
+      setDrawerOpen(true);
+    } else {
+      goToResults(partSearchQuery.trim());
+    }
+  };
+
+  const handleDrawerSearch = (queries) => {
+    setDrawerOpen(false);
+    if (queries.length === 1) {
+      goToResults(queries[0].query);
+    } else {
+      goToMultiPartResults(queries);
+    }
   };
 
   const handleMarcusSubmit = () => {
@@ -289,7 +292,6 @@ export default function DashboardHome() {
   const ymmValid = selectedYear && selectedMake && selectedModel;
   const stats = { searches: 24, orders: 7, revenue: 847.50, avgMargin: 38.2 };
 
-  // ── Locked panel overlay ────────────────────────────────────────
   const LockedOverlay = () => (
     <div className="mt-4 px-4 py-6 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center">
       <div className="text-2xl mb-2">🔒</div>
@@ -392,7 +394,6 @@ export default function DashboardHome() {
 
               {activePanel === 'vehicle' ? (
                 <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-                  {/* VIN / Plate / YMM toggle */}
                   <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
                     <button
                       onClick={() => { setVehicleLookupMode('vin'); setVehicleError(''); }}
@@ -420,7 +421,6 @@ export default function DashboardHome() {
                     </button>
                   </div>
 
-                  {/* VIN input */}
                   {vehicleLookupMode === 'vin' && (
                     <div className="relative">
                       <input
@@ -439,7 +439,6 @@ export default function DashboardHome() {
                     </div>
                   )}
 
-                  {/* Plate input */}
                   {vehicleLookupMode === 'plate' && (
                     <div className="flex gap-2">
                       <input
@@ -462,99 +461,42 @@ export default function DashboardHome() {
                     </div>
                   )}
 
-                  {/* Year/Make/Model dropdowns */}
                   {vehicleLookupMode === 'ymm' && (
                     <div className="space-y-2">
-                      {/* Year */}
-                      <select
-                        value={selectedYear}
-                        onChange={(e) => handleYearChange(e.target.value)}
-                        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700"
-                      >
+                      <select value={selectedYear} onChange={(e) => handleYearChange(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700">
                         <option value="">Select Year</option>
                         {years.map((y) => <option key={y} value={y}>{y}</option>)}
                       </select>
-
-                      {/* Make */}
-                      <select
-                        value={selectedMake}
-                        onChange={(e) => handleMakeChange(e.target.value)}
-                        disabled={!selectedYear || makes.length === 0}
-                        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 disabled:opacity-40 disabled:bg-gray-50"
-                      >
+                      <select value={selectedMake} onChange={(e) => handleMakeChange(e.target.value)} disabled={!selectedYear || makes.length === 0} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 disabled:opacity-40 disabled:bg-gray-50">
                         <option value="">{ymmLoading && !selectedMake ? 'Loading...' : 'Select Make'}</option>
-                        {makes.map((m) => {
-                          const name = typeof m === 'object' ? m.name || m.make : m;
-                          return <option key={name} value={name}>{name}</option>;
-                        })}
+                        {makes.map((m) => { const name = typeof m === 'object' ? m.name || m.make : m; return <option key={name} value={name}>{name}</option>; })}
                       </select>
-
-                      {/* Model */}
-                      <select
-                        value={selectedModel}
-                        onChange={(e) => handleModelChange(e.target.value)}
-                        disabled={!selectedMake || models.length === 0}
-                        className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 disabled:opacity-40 disabled:bg-gray-50"
-                      >
+                      <select value={selectedModel} onChange={(e) => handleModelChange(e.target.value)} disabled={!selectedMake || models.length === 0} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700 disabled:opacity-40 disabled:bg-gray-50">
                         <option value="">{ymmLoading && !selectedModel ? 'Loading...' : 'Select Model'}</option>
-                        {models.map((m) => {
-                          const name = typeof m === 'object' ? m.name || m.model : m;
-                          return <option key={name} value={name}>{name}</option>;
-                        })}
+                        {models.map((m) => { const name = typeof m === 'object' ? m.name || m.model : m; return <option key={name} value={name}>{name}</option>; })}
                       </select>
-
-                      {/* Trim (optional) */}
                       {trims.length > 0 && (
-                        <select
-                          value={selectedTrim}
-                          onChange={(e) => handleTrimChange(e.target.value)}
-                          className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700"
-                        >
+                        <select value={selectedTrim} onChange={(e) => handleTrimChange(e.target.value)} className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white text-gray-700">
                           <option value="">Trim (optional)</option>
-                          {trims.map((t) => {
-                            const name = typeof t === 'object' ? t.name || t.trim : t;
-                            return <option key={name} value={name}>{name}</option>;
-                          })}
+                          {trims.map((t) => { const name = typeof t === 'object' ? t.name || t.trim || t : t; return <option key={name} value={name}>{name}</option>; })}
                         </select>
                       )}
                     </div>
                   )}
 
-                  {/* Error message */}
                   {vehicleError && (
                     <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
                       <p className="text-xs text-red-600">{vehicleError}</p>
                     </div>
                   )}
 
-                  {/* Action button — VIN/Plate decode or YMM select */}
                   {vehicleLookupMode === 'ymm' ? (
-                    <button
-                      onClick={handleYmmSelect}
-                      disabled={!ymmValid || ymmLoading}
-                      className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30"
-                      style={{ background: accentColor }}
-                    >
-                      {ymmLoading ? (
-                        <span className="flex items-center justify-center gap-2">
-                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Loading...
-                        </span>
-                      ) : 'Select Vehicle'}
+                    <button onClick={handleYmmSelect} disabled={!ymmValid || ymmLoading} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30" style={{ background: accentColor }}>
+                      {ymmLoading ? (<span className="flex items-center justify-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Loading...</span>) : 'Select Vehicle'}
                     </button>
                   ) : (
-                    <button
-                      onClick={handleVehicleDecode}
-                      disabled={!vinOrPlateValid || vehicleLoading}
-                      className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30"
-                      style={{ background: accentColor }}
-                    >
-                      {vehicleLoading ? (
-                        <span className="flex items-center justify-center gap-2">
-                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Decoding...
-                        </span>
-                      ) : vehicleLookupMode === 'vin' ? 'Decode VIN' : 'Look Up Plate'}
+                    <button onClick={handleVehicleDecode} disabled={!vinOrPlateValid || vehicleLoading} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30" style={{ background: accentColor }}>
+                      {vehicleLoading ? (<span className="flex items-center justify-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Decoding...</span>) : vehicleLookupMode === 'vin' ? 'Decode VIN' : 'Look Up Plate'}
                     </button>
                   )}
                 </div>
@@ -576,11 +518,7 @@ export default function DashboardHome() {
                 ? 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
                 : 'border-gray-200 bg-gray-50/50 cursor-pointer'
           }`}
-          onClick={() => {
-            if (activePanel !== 'part') {
-              setActivePanel(hasVehicle ? 'part' : 'vehicle');
-            }
-          }}
+          onClick={() => { if (activePanel !== 'part') setActivePanel(hasVehicle ? 'part' : 'vehicle'); }}
         >
           <div className="p-5">
             <div className="flex items-center gap-3 mb-3">
@@ -588,10 +526,7 @@ export default function DashboardHome() {
               <div>
                 <h2 className={`font-bold ${hasVehicle ? 'text-gray-900' : 'text-gray-400'}`}>Part Search</h2>
                 <p className="text-xs text-gray-400">
-                  {hasVehicle
-                    ? `Search for ${vehicle.year} ${vehicle.make} ${vehicle.model}`
-                    : 'Set vehicle first'
-                  }
+                  {hasVehicle ? `Search for ${vehicle.year} ${vehicle.make} ${vehicle.model}` : 'Set vehicle first'}
                 </p>
               </div>
             </div>
@@ -604,27 +539,15 @@ export default function DashboardHome() {
               )
             ) : activePanel === 'part' ? (
               <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-                {/* Browse / Search toggle */}
                 <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
-                  <button
-                    onClick={() => setPartSearchMode('browse')}
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                      partSearchMode === 'browse' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
+                  <button onClick={() => setPartSearchMode('browse')} className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${partSearchMode === 'browse' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     📂 Browse Categories
                   </button>
-                  <button
-                    onClick={() => setPartSearchMode('search')}
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                      partSearchMode === 'search' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
+                  <button onClick={() => setPartSearchMode('search')} className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${partSearchMode === 'search' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     🔍 Search by Name
                   </button>
                 </div>
 
-                {/* Text search */}
                 {partSearchMode === 'search' && (
                   <div className="space-y-2">
                     <input
@@ -636,55 +559,37 @@ export default function DashboardHome() {
                       className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all"
                       autoFocus
                     />
-                    <button
-                      onClick={handlePartSearchSubmit}
-                      disabled={!partSearchQuery.trim()}
-                      className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30"
-                      style={{ background: accentColor }}
-                    >
+                    <button onClick={handlePartSearchSubmit} disabled={!partSearchQuery.trim()} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30" style={{ background: accentColor }}>
                       Search Parts →
                     </button>
                   </div>
                 )}
 
-                {/* Category browser */}
                 {partSearchMode === 'browse' && (
                   <div className="rounded-xl border border-gray-200 overflow-hidden max-h-72 overflow-y-auto scrollbar-thin">
                     {PART_CATEGORIES.map((cat) => (
                       <div key={cat.key}>
                         <button
                           onClick={() => { setExpandedCategory(expandedCategory === cat.key ? null : cat.key); setExpandedSubcategory(null); }}
-                          className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 ${
-                            expandedCategory === cat.key ? 'bg-gray-50' : ''
-                          }`}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 ${expandedCategory === cat.key ? 'bg-gray-50' : ''}`}
                         >
                           <span className="text-sm">{cat.icon}</span>
                           <span className="text-xs font-semibold text-gray-800 flex-1">{cat.label}</span>
-                          <span className="text-[10px] text-gray-300">
-                            {cat.subcategories.reduce((a, s) => a + s.parts.length, 0)}
-                          </span>
-                          <svg className={`w-3.5 h-3.5 text-gray-300 transition-transform ${expandedCategory === cat.key ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
+                          <span className="text-[10px] text-gray-300">{cat.subcategories.reduce((a, s) => a + s.parts.length, 0)}</span>
+                          <svg className={`w-3.5 h-3.5 text-gray-300 transition-transform ${expandedCategory === cat.key ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                         </button>
-
                         {expandedCategory === cat.key && (
                           <div className="bg-gray-50/50">
                             {cat.subcategories.map((sub) => (
                               <div key={sub.key}>
                                 <button
                                   onClick={() => setExpandedSubcategory(expandedSubcategory === sub.key ? null : sub.key)}
-                                  className={`w-full flex items-center gap-2 px-3 py-1.5 pl-8 text-left hover:bg-gray-100/80 transition-colors border-b border-gray-100/60 ${
-                                    expandedSubcategory === sub.key ? 'bg-gray-100/60' : ''
-                                  }`}
+                                  className={`w-full flex items-center gap-2 px-3 py-1.5 pl-8 text-left hover:bg-gray-100/80 transition-colors border-b border-gray-100/60 ${expandedSubcategory === sub.key ? 'bg-gray-100/60' : ''}`}
                                 >
                                   <span className="text-[11px] font-medium text-gray-600 flex-1">{sub.label}</span>
                                   <span className="text-[10px] text-gray-300">{sub.parts.length}</span>
-                                  <svg className={`w-3 h-3 text-gray-300 transition-transform ${expandedSubcategory === sub.key ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                  </svg>
+                                  <svg className={`w-3 h-3 text-gray-300 transition-transform ${expandedSubcategory === sub.key ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                                 </button>
-
                                 {expandedSubcategory === sub.key && sub.parts.map((part) => (
                                   <button
                                     key={part.key}
@@ -692,9 +597,7 @@ export default function DashboardHome() {
                                     className="w-full flex items-center gap-2 px-3 py-1.5 pl-12 text-left hover:bg-blue-50 transition-colors border-b border-gray-100/40 group"
                                   >
                                     <span className="text-[11px] text-gray-500 group-hover:text-blue-700 flex-1 transition-colors">{part.label}</span>
-                                    <svg className="w-3.5 h-3.5 text-gray-200 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                    </svg>
+                                    <svg className="w-3.5 h-3.5 text-gray-200 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                                   </button>
                                 ))}
                               </div>
@@ -723,11 +626,7 @@ export default function DashboardHome() {
                 ? 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md cursor-pointer'
                 : 'border-gray-200 bg-gray-50/50 cursor-pointer'
           }`}
-          onClick={() => {
-            if (activePanel !== 'marcus') {
-              setActivePanel(hasVehicle ? 'marcus' : 'vehicle');
-            }
-          }}
+          onClick={() => { if (activePanel !== 'marcus') setActivePanel(hasVehicle ? 'marcus' : 'vehicle'); }}
         >
           <div className="p-5">
             <div className="flex items-center gap-3 mb-3">
@@ -735,10 +634,7 @@ export default function DashboardHome() {
               <div>
                 <h2 className={`font-bold ${hasVehicle ? 'text-gray-900' : 'text-gray-400'}`}>Ask Marcus</h2>
                 <p className="text-xs text-gray-400">
-                  {hasVehicle
-                    ? `AI diagnosis for ${vehicle.year} ${vehicle.make} ${vehicle.model}`
-                    : 'Set vehicle first'
-                  }
+                  {hasVehicle ? `AI diagnosis for ${vehicle.year} ${vehicle.make} ${vehicle.model}` : 'Set vehicle first'}
                 </p>
               </div>
             </div>
@@ -760,21 +656,12 @@ export default function DashboardHome() {
                   rows={4}
                   autoFocus
                 />
-                <button
-                  onClick={handleMarcusSubmit}
-                  disabled={!marcusInput.trim()}
-                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30"
-                  style={{ background: accentColor }}
-                >
+                <button onClick={handleMarcusSubmit} disabled={!marcusInput.trim()} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-30" style={{ background: accentColor }}>
                   Ask Marcus →
                 </button>
                 <div className="flex flex-wrap gap-1.5">
                   {['Brake noise', 'Check engine light', 'A/C not cold', 'Overheating', "Won't start", 'P0420 code'].map((q) => (
-                    <button
-                      key={q}
-                      onClick={() => setMarcusInput(q)}
-                      className="px-2.5 py-1 text-[11px] text-gray-500 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-full transition-colors"
-                    >
+                    <button key={q} onClick={() => setMarcusInput(q)} className="px-2.5 py-1 text-[11px] text-gray-500 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-full transition-colors">
                       {q}
                     </button>
                   ))}
@@ -802,6 +689,16 @@ export default function DashboardHome() {
           </div>
         ))}
       </div>
+
+      {/* ── Related Parts Drawer ───────────────────────────────────── */}
+      <RelatedPartsDrawer
+        isOpen={drawerOpen}
+        partLabel={drawerPartLabel}
+        vehicle={vehicle}
+        accentColor={accentColor}
+        onSearch={handleDrawerSearch}
+        onClose={() => setDrawerOpen(false)}
+      />
     </div>
   );
 }
