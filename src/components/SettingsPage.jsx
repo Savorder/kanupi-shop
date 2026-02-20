@@ -2,14 +2,17 @@
  * SettingsPage — Manage shop profile and system settings.
  * 
  * Sections:
- *   1. Shop Profile — Name, address, phone, logo URL
- *   2. Branding — Accent color picker
- *   3. Defaults — Default markup %, tax rate
+ *   1. Shop Profile — Name, address, phone
+ *   2. Shop Logo — Drag-and-drop upload (stored in Supabase Storage)
+ *   3. Branding — Accent color picker with presets
+ *   4. Defaults — Default markup %, tax rate
  * 
- * All data from /api/b2b/shop (GET + PUT).
+ * Profile data via GET/PUT /api/b2b/shop.
+ * Logo upload via POST /api/b2b/shop/logo (multipart).
+ * Logo delete via DELETE /api/b2b/shop/logo.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useShop } from '../context/ShopContext';
 import API from '../config/api';
 
@@ -28,13 +31,13 @@ export default function SettingsPage() {
   const { shop, session, refreshShop } = useShop();
   const accentColor = shop?.accent_color || '#dc2626';
   const token = session?.access_token;
+  const fileInputRef = useRef(null);
 
   // ── Form state ──────────────────────────────────────────────────
   const [formData, setFormData] = useState({
     shop_name: '',
     address: '',
     phone: '',
-    logo_url: '',
     accent_color: '#dc2626',
     default_markup_pct: 35,
     tax_rate: 0,
@@ -44,19 +47,24 @@ export default function SettingsPage() {
   const [saveMessage, setSaveMessage] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // ── Logo upload state ───────────────────────────────────────────
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+
   // ── Populate form from shop profile ─────────────────────────────
   useEffect(() => {
     if (shop) {
-      const initial = {
+      setFormData({
         shop_name: shop.shop_name || '',
         address: shop.address || '',
         phone: shop.phone || '',
-        logo_url: shop.logo_url || '',
         accent_color: shop.accent_color || '#dc2626',
         default_markup_pct: shop.default_markup_pct ?? 35,
         tax_rate: shop.tax_rate ?? 0,
-      };
-      setFormData(initial);
+      });
+      setLogoUrl(shop.logo_url || null);
       setLoading(false);
     }
   }, [shop]);
@@ -67,7 +75,7 @@ export default function SettingsPage() {
     setSaveMessage(null);
   };
 
-  // ── Save profile ────────────────────────────────────────────────
+  // ── Save profile (excludes logo — that's handled separately) ────
   const handleSave = async () => {
     if (!token) return;
     try {
@@ -81,7 +89,6 @@ export default function SettingsPage() {
           shop_name: formData.shop_name,
           address: formData.address,
           phone: formData.phone,
-          logo_url: formData.logo_url,
           accent_color: formData.accent_color,
           default_markup_pct: parseFloat(formData.default_markup_pct) || 35,
           tax_rate: parseFloat(formData.tax_rate) || 0,
@@ -107,6 +114,110 @@ export default function SettingsPage() {
     }
   };
 
+  // ── Logo upload ─────────────────────────────────────────────────
+  const handleLogoUpload = async (file) => {
+    if (!file || !token) return;
+
+    // Validate on frontend too
+    const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif'];
+    if (!allowed.includes(file.type)) {
+      setLogoError('Please upload a PNG, JPG, WebP, SVG, or GIF file');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError('File must be under 2 MB');
+      return;
+    }
+
+    try {
+      setLogoUploading(true);
+      setLogoError(null);
+
+      const formPayload = new FormData();
+      formPayload.append('logo', file);
+
+      const res = await fetch(`${API.baseUrl}/api/b2b/shop/logo`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formPayload,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Upload failed');
+      }
+
+      const data = await res.json();
+      setLogoUrl(data.logo_url);
+
+      if (typeof refreshShop === 'function') {
+        await refreshShop();
+      }
+    } catch (err) {
+      console.error('[Settings] Logo upload error:', err);
+      setLogoError(err.message);
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
+  const handleLogoRemove = async () => {
+    if (!token || !confirm('Remove your shop logo?')) return;
+
+    try {
+      setLogoUploading(true);
+      setLogoError(null);
+
+      const res = await fetch(`${API.baseUrl}/api/b2b/shop/logo`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error('Failed to remove logo');
+
+      setLogoUrl(null);
+
+      if (typeof refreshShop === 'function') {
+        await refreshShop();
+      }
+    } catch (err) {
+      console.error('[Settings] Logo remove error:', err);
+      setLogoError(err.message);
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
+  // ── Drag and drop handlers ──────────────────────────────────────
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleLogoUpload(file);
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) handleLogoUpload(file);
+    // Reset input so same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // ── Loading state ───────────────────────────────────────────────
   if (loading) {
     return (
       <div className="max-w-screen-lg mx-auto px-6 py-8">
@@ -117,6 +228,13 @@ export default function SettingsPage() {
       </div>
     );
   }
+
+  // ── Monogram fallback ───────────────────────────────────────────
+  const monogram = (formData.shop_name || 'S')
+    .split(' ')
+    .slice(0, 2)
+    .map((w) => w.charAt(0).toUpperCase())
+    .join('');
 
   return (
     <div className="max-w-screen-lg mx-auto px-6 py-8">
@@ -180,42 +298,114 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-500 font-medium mb-1.5">Phone</label>
-              <input
-                type="tel"
-                value={formData.phone}
-                onChange={(e) => handleChange('phone', e.target.value)}
-                placeholder="(555) 123-4567"
-                className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 font-medium mb-1.5">Logo URL</label>
-              <input
-                type="url"
-                value={formData.logo_url}
-                onChange={(e) => handleChange('logo_url', e.target.value)}
-                placeholder="https://your-logo-url.com/logo.png"
-                className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all"
-              />
-            </div>
+          <div>
+            <label className="block text-xs text-gray-500 font-medium mb-1.5">Phone</label>
+            <input
+              type="tel"
+              value={formData.phone}
+              onChange={(e) => handleChange('phone', e.target.value)}
+              placeholder="(555) 123-4567"
+              className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100 transition-all"
+            />
           </div>
+        </div>
+      </div>
 
-          {/* Logo preview */}
-          {formData.logo_url && (
-            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* SHOP LOGO                                                       */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+        <h2 className="text-base font-bold text-gray-900 mb-5">Shop Logo</h2>
+
+        {logoUrl ? (
+          /* ── Current logo preview ─────────────────────────────── */
+          <div className="flex items-center gap-5">
+            <div className="w-20 h-20 rounded-2xl border-2 border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
               <img
-                src={formData.logo_url}
-                alt="Logo preview"
-                className="w-12 h-12 rounded-xl object-contain bg-white border border-gray-100"
+                src={logoUrl}
+                alt="Shop logo"
+                className="w-full h-full object-contain p-1"
                 onError={(e) => { e.target.style.display = 'none'; }}
               />
-              <span className="text-xs text-gray-500">Logo preview</span>
             </div>
-          )}
-        </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-700 mb-1">Current Logo</p>
+              <p className="text-[11px] text-gray-400 mb-3">Displayed in the header and on customer-facing pages</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={logoUploading}
+                  className="px-4 py-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Replace
+                </button>
+                <button
+                  onClick={handleLogoRemove}
+                  disabled={logoUploading}
+                  className="px-4 py-1.5 text-xs font-semibold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                >
+                  {logoUploading ? 'Removing...' : 'Remove'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* ── Drag-and-drop upload zone ────────────────────────── */
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => { if (!logoUploading) fileInputRef.current?.click(); }}
+            className={`relative rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-all ${
+              dragOver
+                ? 'border-blue-400 bg-blue-50/50'
+                : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50/50'
+            }`}
+          >
+            {logoUploading ? (
+              <div>
+                <div className="w-8 h-8 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm font-medium text-gray-500">Uploading...</p>
+              </div>
+            ) : (
+              <>
+                <div className="w-14 h-14 rounded-2xl mx-auto mb-3 flex items-center justify-center" style={{ background: `${accentColor}12` }}>
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold"
+                    style={{ background: accentColor }}
+                  >
+                    {monogram}
+                  </div>
+                </div>
+                <p className="text-sm font-medium text-gray-700 mb-1">
+                  {dragOver ? 'Drop your logo here' : 'Drop your logo here, or click to browse'}
+                </p>
+                <p className="text-[11px] text-gray-400">
+                  PNG, JPG, WebP, SVG, or GIF — Max 2 MB
+                </p>
+                <p className="text-[11px] text-gray-300 mt-2">
+                  Currently using monogram "{monogram}" from your shop name
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+
+        {/* Upload error */}
+        {logoError && (
+          <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-xs text-red-600">{logoError}</p>
+          </div>
+        )}
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════ */}
@@ -270,7 +460,7 @@ export default function SettingsPage() {
                 className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold"
                 style={{ background: formData.accent_color }}
               >
-                {(formData.shop_name || 'S').charAt(0).toUpperCase()}
+                {monogram}
               </div>
               <button
                 className="px-4 py-2 text-xs font-semibold rounded-lg text-white"
