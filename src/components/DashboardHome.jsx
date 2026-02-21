@@ -26,7 +26,7 @@ import PART_CATEGORIES from '../config/partCategories';
 import { getRelatedParts } from '../config/relatedParts';
 import RelatedPartsDrawer from './RelatedPartsDrawer';
 import API from '../config/api';
-import { getPartIcon } from '../config/partIcons.jsx';
+import { getPartIcon } from '../config/partIcons.js';
 import MarcusAvatar from './MarcusAvatar';
 
 const US_STATES = [
@@ -976,11 +976,8 @@ export default function DashboardHome() {
                         <MarcusAvatar size="sm" />
                       </div>
                     ) : (
-                      <div
-                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                        style={{ background: `${partIcon.color}12`, border: `1px solid ${partIcon.color}25` }}
-                      >
-                        <partIcon.Icon size={18} strokeWidth={1.75} color={partIcon.color} />
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-gray-50 border border-gray-100 overflow-hidden">
+                        <img src={partIcon.image} alt="" className="w-8 h-8 object-contain" />
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
